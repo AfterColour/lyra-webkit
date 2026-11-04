@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "GraphicsContext.h"
+#include "MediaTraceWin.h"
 
 #include "DisplayList.h"
 #include "Filter.h"
@@ -459,7 +460,12 @@ void GraphicsContext::drawMeshGradient(MeshGradient& gradient, const FloatRect& 
 #if ENABLE(VIDEO)
 void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, RasterDrawingOptions options)
 {
-    RefPtr image = frame.copyNativeImage();
+    RefPtr<NativeImage> image;
+    {
+        MEDIA_TRACE_TIME("frame -> NativeImage");
+        image = frame.copyNativeImage();
+    }
+    MEDIA_TRACE("native image=%d", !!image);
     if (!image)
         return;
     IntSize size = image->size();
@@ -469,6 +475,7 @@ void GraphicsContext::drawVideoFrame(const VideoFrame& frame, const FloatRect& d
     auto compositeOperator = options.compositeOperator();
     if (compositeOperator == CompositeOperator::SourceOver && (shouldDiscardAlpha == ShouldDiscardAlpha::Yes || !image->hasAlpha()))
         compositeOperator = CompositeOperator::Copy;
+    MEDIA_TRACE_TIME("drawNativeImage (to GPU proc)");
     drawNativeImage(*image, destination, { { }, size }, { options, compositeOperator });
 }
 #endif

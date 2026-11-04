@@ -631,6 +631,12 @@ void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const F
     if (!sharedVideoFrame)
         return;
     send(Messages::RemoteGraphicsContext::DrawVideoFrame(WTF::move(*sharedVideoFrame), destination, shouldDiscardAlpha, options));
+#else
+    // SharedVideoFrame (the zero-copy transport above) only exists on Cocoa. Elsewhere, e.g. the
+    // Windows port painting DOM content in the GPU process, this used to drop the frame, leaving
+    // <video> blank. Fall back to the generic path: copy the frame into a NativeImage here and
+    // send it with drawNativeImage(), which every port supports.
+    GraphicsContext::drawVideoFrame(frame, destination, shouldDiscardAlpha, options);
 #endif
 }
 #endif

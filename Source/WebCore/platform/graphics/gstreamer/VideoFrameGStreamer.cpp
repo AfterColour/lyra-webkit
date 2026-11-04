@@ -21,6 +21,7 @@
 #include "config.h"
 
 #include "VideoFrameGStreamer.h"
+#include "MediaTraceWin.h"
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
 
@@ -163,12 +164,31 @@ static RefPtr<ImageGStreamer> convertSampleToImage(const GRefPtr<GstSample>& sam
 #else
     auto format = GST_VIDEO_INFO_HAS_ALPHA(&videoInfo) ? "ARGB"_s : "xRGB"_s;
 #endif
+#if OS(WINDOWS)
+    // The fallback video sink already delivers BGRx/BGRA. The caps of such a sample still differ
+    // from the ones below (colorimetry, HDR metadata...), so the converter would start its
+    // pipeline (state changes on the main thread) for every frame only to copy it unchanged.
+    {
+        GstVideoInfo sampleInfo;
+        if (gst_video_info_from_caps(&sampleInfo, gst_sample_get_caps(sample.get()))
+            && GST_VIDEO_INFO_FORMAT(&sampleInfo) == gst_video_format_from_string(format.characters())
+            && GST_VIDEO_INFO_WIDTH(&sampleInfo) == GST_VIDEO_INFO_WIDTH(&videoInfo)
+            && GST_VIDEO_INFO_HEIGHT(&sampleInfo) == GST_VIDEO_INFO_HEIGHT(&videoInfo)) {
+            MEDIA_TRACE("already %s, no conversion", format.characters());
+            return ImageGStreamer::create(GRefPtr<GstSample>(sample));
+        }
+    }
+#endif
     GRefPtr caps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, format.characters(), "framerate", GST_TYPE_FRACTION, GST_VIDEO_INFO_FPS_N(&videoInfo), GST_VIDEO_INFO_FPS_D(&videoInfo), "width", G_TYPE_INT, GST_VIDEO_INFO_WIDTH(&videoInfo), "height", G_TYPE_INT, GST_VIDEO_INFO_HEIGHT(&videoInfo), nullptr));
     auto convertedSample = GStreamerVideoFrameConverter::singleton().convert(sample, caps);
-    if (!convertedSample)
+    if (!convertedSample) {
+        MEDIA_TRACE("conversion to %s FAILED", format.characters());
         return nullptr;
+    }
 
-    return ImageGStreamer::create(WTF::move(convertedSample));
+    Ref image = ImageGStreamer::create(WTF::move(convertedSample));
+    MEDIA_TRACE("converted to %s, image=%d", format.characters(), image->image() ? 1 : 0);
+    return image;
 }
 
 RefPtr<VideoFrame> VideoFrame::fromNativeImage(NativeImage& image)

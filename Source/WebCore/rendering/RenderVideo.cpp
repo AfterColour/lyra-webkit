@@ -27,6 +27,7 @@
 
 #if ENABLE(VIDEO)
 #include "RenderVideo.h"
+#include "MediaTraceWin.h"
 
 #include "Document.h"
 #include "DocumentFullscreen.h"
@@ -376,6 +377,7 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     bool displayingPoster = videoElement->shouldDisplayPosterImage();
     GraphicsContext& context = paintInfo.context();
 
+    MEDIA_TRACE("phase=%d poster=%d player=%d", static_cast<int>(paintInfo.phase), displayingPoster, !!mediaPlayer);
     if (!displayingPoster && !mediaPlayer) {
         if (paintInfo.phase == PaintPhase::Foreground)
             page->addRelevantUnpaintedObject(*this, visualOverflowRect());
@@ -384,6 +386,7 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
 
     LayoutRect videoBoxRect = videoBox();
     if (videoBoxRect.isEmpty()) {
+        MEDIA_TRACE("videoBox is empty");
         if (paintInfo.phase == PaintPhase::Foreground)
             page->addRelevantUnpaintedObject(*this, visualOverflowRect());
         return;
@@ -432,9 +435,23 @@ void RenderVideo::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
     if (hasAcceleratedCompositing()
         && videoElement->supportsAcceleratedRendering()
         && !paintInfo.paintBehavior.contains(PaintBehavior::FlattenCompositingLayers)
+        && !paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting)) {
+        MEDIA_TRACE("skipped: accelerated rendering");
+        return;
+    }
+
+#if !USE(COORDINATED_GRAPHICS)
+    // RenderVideo has children (the media controls), so RenderReplaced calls paintReplaced() for
+    // several phases (block background, floats, foreground, outlines...). Ports that composite
+    // video in hardware never reach this point; with software video painting (Windows/GStreamer)
+    // each call converted and uploaded the whole frame again, five times per repaint.
+    if (paintInfo.phase != PaintPhase::Foreground
+        && !paintInfo.paintBehavior.contains(PaintBehavior::FlattenCompositingLayers)
         && !paintInfo.paintBehavior.contains(PaintBehavior::Snapshotting))
         return;
+#endif
 
+    MEDIA_TRACE("-> HTMLMediaElement::paint %dx%d", paintRect.width().toInt(), paintRect.height().toInt());
     videoElement->paint(context, paintRect);
 }
 

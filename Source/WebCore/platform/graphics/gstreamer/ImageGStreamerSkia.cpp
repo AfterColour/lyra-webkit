@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "ImageGStreamer.h"
+#include "MediaTraceWin.h"
 
 #if ENABLE(VIDEO) && USE(GSTREAMER) && USE(SKIA)
 
@@ -47,8 +48,10 @@ ImageGStreamer::ImageGStreamer(GRefPtr<GstSample>&& sample)
         return;
 
     GstMappedFrame videoFrame(m_sample, GST_MAP_READ);
-    if (!videoFrame)
+    if (!videoFrame) {
+        MEDIA_TRACE("failed to map the frame");
         return;
+    }
 
     auto* videoInfo = videoFrame.info();
 
@@ -153,7 +156,11 @@ ImageGStreamer::ImageGStreamer(GRefPtr<GstSample>&& sample)
     // data here.
     auto planeData = videoFrame.planeData(0);
     SkPixmap pixmap(imageInfo, planeData.data(), videoFrame.planeStride(0));
-    m_image = SkImages::RasterFromPixmapCopy(pixmap);
+    {
+        MEDIA_TRACE_TIME("copy pixels into SkImage");
+        m_image = SkImages::RasterFromPixmapCopy(pixmap);
+    }
+    MEDIA_TRACE("%s %dx%d stride=%d image=%d", gst_video_format_to_string(static_cast<GstVideoFormat>(videoFrame.format())), videoFrame.width(), videoFrame.height(), videoFrame.planeStride(0), !!m_image);
 
     if (auto* cropMeta = gst_buffer_get_video_crop_meta(buffer))
         m_cropRect = FloatRect(cropMeta->x, cropMeta->y, cropMeta->width, cropMeta->height);

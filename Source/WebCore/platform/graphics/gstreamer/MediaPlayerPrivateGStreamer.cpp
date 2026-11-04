@@ -27,12 +27,20 @@
 #include "MediaPlayerPrivateGStreamer.h"
 #include "TrackPrivateBaseGStreamer.h"
 #include <optional>
+#include "MediaTraceWin.h"
+
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+#include "AcceleratedVideoLayerWin.h"
+#include "GStreamerD3D11Win.h"
+#endif
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
 
 #include "AudioTrackPrivateGStreamer.h"
 #include "GStreamerAudioMixer.h"
+#if ENABLE(MEDIA_STREAM)
 #include "GStreamerCaptureDeviceManager.h"
+#endif
 #include "GStreamerCommon.h"
 #include "GStreamerQuirks.h"
 #include "GStreamerRegistryScanner.h"
@@ -2063,6 +2071,11 @@ bool MediaPlayerPrivateGStreamer::handleNeedContextMessage(GstMessage* message)
     }
 #endif // ENABLE(ENCRYPTED_MEDIA)
 
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    if (handleGStreamerD3D11NeedContext(GST_ELEMENT(GST_MESSAGE_SRC(message)), contextTypeChars))
+        return true;
+#endif
+
     GST_DEBUG_OBJECT(pipeline(), "Unhandled %s need-context message for %s", contextType.utf8(), GST_MESSAGE_SRC_NAME(message));
     return false;
 }
@@ -3640,6 +3653,12 @@ void MediaPlayerPrivateGStreamer::setPlaybackFlags(bool isMediaStream)
         boolForPrinting(hasAudio), boolForPrinting(hasNativeAudio), boolForPrinting(hasVideo), boolForPrinting(hasNativeVideo),
         boolForPrinting(hasSoftwareColorBalance), boolForPrinting(hasDeinterlace));
     flags |= hasText | hasAudio | hasVideo | hasNativeVideo | hasNativeAudio | hasSoftwareColorBalance | hasDeinterlace;
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    // The D3D11 path keeps frames in D3D11 memory up to the sink; playsink's videoconvert and
+    // videobalance only handle system memory, so leave them out.
+    if (m_d3d11VideoLayer)
+        flags |= getGstPlayFlag("native-video");
+#endif
     g_object_set(pipeline(), "flags", flags, nullptr);
     GST_DEBUG_OBJECT(pipeline(), "Current pipeline flags 0x%x", flags);
 
@@ -3720,6 +3739,25 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
 
     GST_INFO_OBJECT(pipeline(), "Using legacy playbin element: %s", boolForPrinting(m_isLegacyPlaybin));
 
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    // Hardware path: decoder -> d3d11convert (BGRA, on the GPU) -> shared D3D11 texture -> compositor.
+    if (player->isVideoPlayer() && !isMediaStream) {
+        auto d3d11convert = adoptGRef(gst_element_factory_find("d3d11convert"));
+        if (d3d11convert)
+            m_d3d11VideoLayer = AcceleratedVideoLayerWin::create();
+        if (m_d3d11VideoLayer) {
+            prewarmGStreamerD3D11(m_d3d11VideoLayer->adapterLUID());
+            m_d3d11VideoLayer->setFailureHandler([weakThis = ThreadSafeWeakPtr { *this }] {
+                if (RefPtr self = weakThis.get())
+                    self->fallBackToSoftwareVideoPainting();
+            });
+        }
+        MEDIA_TRACE("D3D11 video layer: %s", m_d3d11VideoLayer ? "yes" : "no (software painting)");
+        if (m_d3d11VideoLayer)
+            player->renderingModeChanged();
+    }
+#endif
+
     // Let also other listeners subscribe to (application) messages in this bus.
     GRefPtr bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
     gst_bus_enable_sync_message_emission(bus.get());
@@ -3777,6 +3815,34 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
         m_audioSink = createAudioSink();
 
     g_object_set(m_pipeline.get(), "audio-sink", m_audioSink.get(), "video-sink", createVideoSink(), nullptr);
+
+#if OS(WINDOWS)
+    // The software video sink needs BGRx/BGRA in system memory. Left alone, playsink gets there with
+    // videoconvert: the D3D11 decoder downloads NV12/P010 and the CPU converts every frame, which
+    // caps 1080p60 at ~25 fps. Convert on the GPU instead and download the finished BGRA frame;
+    // playsink's own videoconvert then runs in passthrough. The video filter sits in playsink right
+    // after the decoder, before the converters.
+    if (m_isUsingFallbackVideoSink && !isMediaStream) {
+        auto d3d11convert = adoptGRef(gst_element_factory_find("d3d11convert"));
+        auto d3d11download = adoptGRef(gst_element_factory_find("d3d11download"));
+        if (d3d11convert && d3d11download) {
+            GUniqueOutPtr<GError> error;
+            // An explicit capsfilter: gst_parse does not accept caps with features at the end of a
+            // description ("no element D3D11Memory").
+            const char* description = "d3d11convert ! capsfilter caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\" ! d3d11download";
+#if USE(GRAPHICS_LAYER_WC)
+            if (m_d3d11VideoLayer)
+                description = "d3d11convert ! capsfilter caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\"";
+#endif
+            GstElement* filter = gst_parse_bin_from_description(description, TRUE, &error.outPtr());
+            if (filter) {
+                g_object_set(m_pipeline.get(), "video-filter", filter, nullptr);
+                MEDIA_TRACE("video-filter: %s", description);
+            } else
+                MEDIA_TRACE("video-filter not created: %s", error ? error->message : "?");
+        }
+    }
+#endif
 
     setPlaybackFlags(isMediaStream);
 
@@ -3906,8 +3972,15 @@ void MediaPlayerPrivateGStreamer::eosTimerFired()
 
 void MediaPlayerPrivateGStreamer::acceleratedRenderingStateChanged()
 {
+#if USE(COORDINATED_GRAPHICS)
     RefPtr player = m_player.get();
     m_canRenderingBeAccelerated = player && player->acceleratedCompositingEnabled();
+#else
+    // The accelerated path hands frames to the Coordinated Graphics compositor (GTK/WPE).
+    // Other ports (Windows: GraphicsLayerWC) have no such sink, so frames must go through
+    // paint(), otherwise <video> stays blank while audio plays.
+    m_canRenderingBeAccelerated = false;
+#endif
 }
 
 bool MediaPlayerPrivateGStreamer::performTaskAtTime(Function<void(const MediaTime&)>&& task, const MediaTime& time)
@@ -4004,6 +4077,7 @@ void MediaPlayerPrivateGStreamer::repaint()
     }
     ASSERT(isMainThread());
 
+    MEDIA_TRACE("player=%d", !!m_player.get());
     if (RefPtr player = m_player.get())
         player->repaint();
 
@@ -4188,6 +4262,50 @@ bool MediaPlayerPrivateGStreamer::isSeamlessSeekingEnabled() const
 void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
 {
     ASSERT(!isMainThread());
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    // m_sample is replaced below; keep the frame alive for pushD3D11Frame().
+    GRefPtr<GstBuffer> d3d11FrameBuffer = gst_sample_get_buffer(sample.get());
+    GRefPtr<GstCaps> d3d11FrameCaps = gst_sample_get_caps(sample.get());
+#endif
+    MEDIA_TRACE("sample=%p accelerated=%d", sample.get(), m_canRenderingBeAccelerated);
+#if OS(WINDOWS)
+    if (mediaTraceFile()) {
+        // Frame arrival rate at the sink, and once per pipeline the elements it auto-plugged.
+        static double lastFrameMs = -1;
+        double nowMs = MonotonicTime::now().secondsSinceEpoch().milliseconds();
+        if (lastFrameMs >= 0)
+            mediaTraceTiming("frame interval (sink)", nowMs - lastFrameMs);
+        lastFrameMs = nowMs;
+
+        static GstElement* dumpedPipeline = nullptr;
+        if (dumpedPipeline != m_pipeline.get()) {
+            dumpedPipeline = m_pipeline.get();
+            GUniquePtr<GstIterator> iterator(gst_bin_iterate_recurse(GST_BIN_CAST(m_pipeline.get())));
+            GValue item = G_VALUE_INIT;
+            while (gst_iterator_next(iterator.get(), &item) == GST_ITERATOR_OK) {
+                auto* element = GST_ELEMENT_CAST(g_value_get_object(&item));
+                if (auto* factory = gst_element_get_factory(element)) {
+                    const char* klass = gst_element_factory_get_metadata(factory, GST_ELEMENT_METADATA_KLASS);
+                    WebCore::mediaTrace("pipeline", "%-24s %s", GST_OBJECT_NAME(factory), klass ? klass : "");
+                }
+                g_value_reset(&item);
+            }
+            g_value_unset(&item);
+        }
+
+        static unsigned framesSinceStats = 0;
+        if (++framesSinceStats >= 120 && m_videoSink && gstObjectHasProperty(m_videoSink.get(), "stats"_s)) {
+            framesSinceStats = 0;
+            GstStructure* stats = nullptr;
+            g_object_get(m_videoSink.get(), "stats", &stats, nullptr);
+            if (stats) {
+                GUniquePtr<char> statsString(gst_structure_to_string(stats));
+                WebCore::mediaTrace("sink stats", "%s", statsString.get());
+                gst_structure_free(stats);
+            }
+        }
+    }
+#endif
 
     GstBuffer* buffer = gst_sample_get_buffer(sample.get());
     RELEASE_ASSERT(buffer);
@@ -4253,12 +4371,29 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
         });
     }
 
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    if (isUsingD3D11VideoLayer()) {
+        MEDIA_TRACE_TIME("push D3D11 frame");
+        if (pushD3D11Frame(d3d11FrameBuffer.get(), d3d11FrameCaps.get()))
+            return;
+        // Paint this frame (and the next ones) in software below.
+        RunLoop::mainSingleton().dispatch([weakThis = ThreadSafeWeakPtr { *this }] {
+            if (RefPtr self = weakThis.get())
+                self->fallBackToSoftwareVideoPainting();
+        });
+        m_d3d11VideoLayerFailed = true;
+    }
+#endif
+
     if (!m_canRenderingBeAccelerated) {
         Locker locker { m_drawLock };
         if (m_isBeingDestroyed)
             return;
         m_drawTimer.startOneShot(0_s);
-        m_drawCondition.wait(m_drawLock);
+        {
+            MEDIA_TRACE_TIME("sink waits for main thread");
+            m_drawCondition.wait(m_drawLock);
+        }
         return;
     }
 
@@ -4266,6 +4401,36 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
     pushTextureToCompositor(isDuplicateSample);
 #endif
 }
+
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+PlatformLayer* MediaPlayerPrivateGStreamer::platformLayer() const
+{
+    return isUsingD3D11VideoLayer() ? m_d3d11VideoLayer->platformLayer() : nullptr;
+}
+
+bool MediaPlayerPrivateGStreamer::supportsAcceleratedRendering() const
+{
+    return isUsingD3D11VideoLayer();
+}
+
+void MediaPlayerPrivateGStreamer::fallBackToSoftwareVideoPainting()
+{
+    ASSERT(isMainThread());
+    static bool logged = false;
+    if (!std::exchange(logged, true))
+        WTFLogAlways("MyBrowser: D3D11 video layer failed, painting video frames in software");
+    MEDIA_TRACE("falling back to software painting");
+    m_d3d11VideoLayerFailed = true;
+    // Detaches the layer from the GraphicsLayer and lets RenderVideo paint the frames again.
+    if (RefPtr player = m_player.get())
+        player->renderingModeChanged();
+}
+
+bool MediaPlayerPrivateGStreamer::pushD3D11Frame(GstBuffer* buffer, GstCaps* caps)
+{
+    return pushGStreamerD3D11Frame(*m_d3d11VideoLayer, buffer, caps);
+}
+#endif
 
 void MediaPlayerPrivateGStreamer::cancelRepaint(bool destroying)
 {
@@ -4394,11 +4559,19 @@ void MediaPlayerPrivateGStreamer::setPresentationSize(const IntSize& size)
 
 void MediaPlayerPrivateGStreamer::paint(GraphicsContext& context, const FloatRect& rect)
 {
-    if (context.paintingDisabled())
+    MEDIA_TRACE_TIME("paint() total");
+// With the D3D11 video layer, painting here only happens for snapshots and after a fallback to
+// software painting. The BGRA frames are in D3D11 memory: mapping them for reading downloads them
+// (ImageGStreamer), other conversions go through the converter's d3d11download pipeline.
+    if (context.paintingDisabled()) {
+        MEDIA_TRACE("painting disabled");
         return;
+    }
 
-    if (!m_pageIsVisible || isSuspended())
+    if (!m_pageIsVisible || isSuspended()) {
+        MEDIA_TRACE("skipped: pageIsVisible=%d suspended=%d", m_pageIsVisible, isSuspended());
         return;
+    }
 
     // Keep a reference to the sample to avoid keeping the sampleMutex locked, which would be prone
     // to deadlocks if triggerRepaint is called while the video frame converter is blocked on its
@@ -4407,8 +4580,10 @@ void MediaPlayerPrivateGStreamer::paint(GraphicsContext& context, const FloatRec
     std::optional<VideoFrameGStreamer::Info> videoInfo;
     {
         Locker sampleLocker { m_sampleMutex };
-        if (!GST_IS_SAMPLE(m_sample.get()))
+        if (!GST_IS_SAMPLE(m_sample.get())) {
+            MEDIA_TRACE("no sample yet");
             return;
+        }
 
         sample = m_sample;
         videoInfo = m_videoInfo;
@@ -4421,9 +4596,15 @@ void MediaPlayerPrivateGStreamer::paint(GraphicsContext& context, const FloatRec
 
     auto caps = gst_sample_get_caps(sample.get());
     auto presentationSize = getVideoResolutionFromCaps(caps);
-    if (!presentationSize)
+    if (!presentationSize) {
+        MEDIA_TRACE("no presentation size in caps");
         return;
+    }
 
+    {
+        GUniquePtr<char> capsString(gst_caps_to_string(caps));
+        MEDIA_TRACE("drawing %s into %.0fx%.0f", capsString.get(), rect.width(), rect.height());
+    }
     Ref frame = VideoFrameGStreamer::create(WTF::move(sample), { IntSize(*presentationSize), WTF::move(videoInfo) });
     context.drawVideoFrame(frame, rect, ShouldDiscardAlpha::No, { m_videoSourceOrientation });
 }

@@ -35,6 +35,10 @@ namespace WebKit {
 
 class WCPlatformLayerGCGL : public WebCore::WCPlatformLayer {
 public:
+    // Layers that produce frames on their own (the D3D11 video layer) tell the GraphicsLayerWC
+    // showing them, which then registers as their TextureMapperPlatformLayer::Client.
+    virtual bool notifiesContentsChanged() const { return false; }
+
     Vector<WCContentBufferIdentifier> takeContentBufferIdentifiers()
     {
         return std::exchange(m_contentBufferIdentifiers, { });
@@ -44,7 +48,7 @@ public:
     {
         m_contentBufferIdentifiers.append(contentBuffer);
         // FIXME: TextureMapperGCGLPlatformLayer doesn't support double buffering yet.
-        ASSERT(m_contentBufferIdentifiers.size() == 1);
+        ASSERT(notifiesContentsChanged() || m_contentBufferIdentifiers.size() == 1);
     }
 
 private:

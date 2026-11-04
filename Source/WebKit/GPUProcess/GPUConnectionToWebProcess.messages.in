@@ -67,6 +67,13 @@ messages -> GPUConnectionToWebProcess WantsDispatchMessage {
 #if USE(GRAPHICS_LAYER_WC)
     CreateWCLayerTreeHost(WebKit::WCLayerTreeHostIdentifier identifier, uint64_t nativeWindow, bool usesOffscreenRendering) AllowedWhenWaitingForSyncReply
     ReleaseWCLayerTreeHost(WebKit::WCLayerTreeHostIdentifier identifier) AllowedWhenWaitingForSyncReply
+#if USE(GSTREAMER)
+    GetWCVideoAdapterLUID() -> (int64_t adapterLUID) Synchronous
+    CreateWCVideoSurface(uint64_t identifier)
+    SetWCVideoSurfaceTextures(uint64_t identifier, Vector<WTF::Win32Handle> textures, uint32_t width, uint32_t height)
+    PresentWCVideoSurface(uint64_t identifier, uint32_t slot) -> (std::optional<WebKit::WCContentBufferIdentifier> contentBuffer, bool succeeded)
+    ReleaseWCVideoSurface(uint64_t identifier)
+#endif
 #endif
 #if ENABLE(VIDEO)
     CanDecodeExtendedType(enum:uint8_t WebCore::PlatformMediaDecodingType platformType, WebCore::ContentType contentType) -> (bool supported);

@@ -35,12 +35,16 @@
 
 namespace WebKit {
 
-class WCContentBuffer final : WebCore::TextureMapperPlatformLayer::Client {
+// Public base: RemoteWCVideoSurface gets back to its WCContentBuffer from its platform layer client.
+class WCContentBuffer final : public WebCore::TextureMapperPlatformLayer::Client {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(WCContentBuffer);
 public:
     class Client {
     public:
         virtual void platformLayerWillBeDestroyed() = 0;
+        // The platform layer has new contents (D3D11 video layer). Returns false if the client
+        // cannot composite on its own, so the update has to come from the web process.
+        virtual bool contentBufferNeedsDisplay() { return false; }
     };
     
     WCContentBuffer(WCContentBufferManager& manager, WebCore::ProcessIdentifier processIdentifier, WebCore::TextureMapperPlatformLayer* platformLayer)
@@ -71,6 +75,10 @@ public:
         return m_identifier;
     }
 
+    // Composites the scene showing this buffer again, without a layer tree update from the web
+    // process. False when no scene shows it or the scene cannot do that (offscreen rendering).
+    bool compositeForNewContents() { return m_client && m_client->contentBufferNeedsDisplay(); }
+
 private:
     void platformLayerWillBeDestroyed() override
     {
@@ -78,7 +86,10 @@ private:
             m_client->platformLayerWillBeDestroyed();
         m_manager.removeContentBuffer(m_processIdentifier, *this);
     }
-    void setPlatformLayerNeedsDisplay() override { }
+    void setPlatformLayerNeedsDisplay() override
+    {
+        compositeForNewContents();
+    }
 
     WCContentBufferManager& m_manager;
     WebCore::ProcessIdentifier m_processIdentifier;

@@ -29,6 +29,7 @@
 
 #include "WCUpdateInfo.h"
 #include <WebCore/GraphicsLayerContentsDisplayDelegate.h>
+#include <WebCore/TextureMapperPlatformLayer.h>
 #include <wtf/DoublyLinkedList.h>
 
 namespace WebCore {
@@ -38,7 +39,7 @@ class TransformState;
 namespace WebKit {
 class WCTiledBacking;
 
-class GraphicsLayerWC final : public WebCore::GraphicsLayer, public DoublyLinkedListNode<GraphicsLayerWC> {
+class GraphicsLayerWC final : public WebCore::GraphicsLayer, public DoublyLinkedListNode<GraphicsLayerWC>, private WebCore::TextureMapperPlatformLayer::Client {
 public:
     struct Observer {
         virtual void graphicsLayerAdded(GraphicsLayerWC&) = 0;
@@ -122,6 +123,11 @@ private:
     WebCore::TransformationMatrix layerTransform(const WebCore::FloatPoint&, const WebCore::TransformationMatrix* = nullptr) const;
     VisibleAndCoverageRects computeVisibleAndCoverageRect(WebCore::TransformState&, bool preserves3D) const;
     void recursiveCommitChanges(const WebCore::TransformState&);
+
+    // TextureMapperPlatformLayer::Client, only for platform layers that notifiesContentsChanged().
+    void platformLayerWillBeDestroyed() final;
+    void setPlatformLayerNeedsDisplay() final;
+    void setPlatformLayerClient(bool);
 
     friend class WTF::DoublyLinkedListNode<GraphicsLayerWC>;
 

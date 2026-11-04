@@ -31,6 +31,19 @@ list(APPEND WebKit_MESSAGES_IN_FILES
     GPUProcess/graphics/wc/RemoteWCLayerTreeHost
 )
 
+if (USE_GSTREAMER)
+    # MyBrowser: <video> frames as shared D3D11 textures (WebCore::AcceleratedVideoLayerWin).
+    list(APPEND WebKit_SOURCES
+        GPUProcess/graphics/wc/RemoteWCVideoSurface.cpp
+
+        WebProcess/GPU/graphics/wc/WCVideoLayerProxy.cpp
+    )
+    list(APPEND WebKit_PRIVATE_LIBRARIES
+        d3d11
+        dxgi
+    )
+endif ()
+
 list(APPEND WebKit_SERIALIZATION_IN_FILES
     WebProcess/WebPage/wc/WCBackingStore.serialization.in
     WebProcess/WebPage/wc/WCUpdateInfo.serialization.in

@@ -162,6 +162,7 @@ def types_that_must_be_moved():
         'MachSendRight',
         'std::optional<WebKit::SharedVideoFrame>',
         'Vector<WebCore::SharedMemory::Handle>',
+        'Vector<WTF::Win32Handle>',
         'WebKit::WebGPU::ExternalTextureDescriptor',
         'WebKit::WebGPU::ImageCopyExternalImageVideoSource',
         'WebCore::GraphicsContextGL::ExternalImageSource',
@@ -2017,6 +2018,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::WebUserScriptData': ['"WebUserContentControllerDataTypes.h"'],
         'WebKit::WebUserStyleSheetData': ['"WebUserContentControllerDataTypes.h"'],
         'WTF::UnixFileDescriptor': ['<wtf/unix/UnixFileDescriptor.h>'],
+        'WTF::Win32Handle': ['<wtf/win/Win32Handle.h>'],
         'WTF::SystemMemoryPressureStatus': ['<wtf/MemoryPressureHandler.h>'],
     }
 

@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "RemoteGraphicsContext.h"
+#include <WebCore/MediaTraceWin.h>
 
 #if ENABLE(GPU_PROCESS)
 
@@ -445,6 +446,12 @@ void RemoteGraphicsContext::drawNativeImage(RenderingResourceIdentifier imageIde
 {
     RefPtr image = resourceCache().cachedNativeImage(imageIdentifier);
     MESSAGE_CHECK(image);
+    // Only video frames are this large; time them to see the cost of uploading each frame.
+    if (image->size().width() >= 640) {
+        MEDIA_TRACE_TIME("GPU proc: drawNativeImage");
+        context().drawNativeImage(*image, destRect, srcRect, options);
+        return;
+    }
     context().drawNativeImage(*image, destRect, srcRect, options);
 }
 

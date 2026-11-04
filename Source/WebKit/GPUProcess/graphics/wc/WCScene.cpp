@@ -51,7 +51,10 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WCScene);
 struct WCScene::Layer final : public WCContentBuffer::Client {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(WCScene::Layer);
 public:
-    Layer() = default;
+    explicit Layer(WCScene& scene)
+        : scene(scene)
+    {
+    }
     ~Layer()
     {
         if (contentBuffer)
@@ -66,6 +69,13 @@ public:
         contentBuffer = nullptr;
         texmapLayer.setContentsLayer(nullptr);
     }
+
+    bool contentBufferNeedsDisplay() override
+    {
+        return scene.recomposite();
+    }
+
+    WCScene& scene;
 
     WebCore::TextureMapperLayer texmapLayer;
     std::unique_ptr<WebCore::TextureMapperSparseBackingStore> backingStore;
@@ -103,7 +113,7 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
     m_textureMapper->releaseUnusedTexturesNow();
 
     for (auto id : update.addedLayers) {
-        auto layer = makeUnique<Layer>();
+        auto layer = makeUnique<Layer>(*this);
         m_layers.add(id, WTF::move(layer));
     }
 
@@ -254,6 +264,10 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
     auto rootLayer = &m_layers.get(*update.rootLayer)->texmapLayer;
     rootLayer->applyAnimationsRecursively(MonotonicTime::now());
 
+    m_lastRootLayer = *update.rootLayer;
+    m_lastViewport = update.viewport;
+    m_canRecomposite = !update.remoteContextHostedIdentifier && !m_usesOffscreenRendering;
+
     WebCore::BitmapTexture* surface = nullptr;
     RefPtr<WebCore::BitmapTexture> texture;
     bool showFPS = true;
@@ -298,6 +312,24 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
     } else
         m_context->swapBuffers();
     return result;
+}
+
+bool WCScene::recomposite()
+{
+    if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper)
+        return false;
+    auto* root = m_layers.get(*m_lastRootLayer);
+    if (!root || !m_context->makeContextCurrent())
+        return false;
+
+    root->texmapLayer.applyAnimationsRecursively(MonotonicTime::now());
+    glViewport(0, 0, m_lastViewport.width(), m_lastViewport.height());
+    m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, nullptr);
+    root->texmapLayer.paint(*m_textureMapper);
+    m_fpsCounter.updateFPSAndDisplay(*m_textureMapper);
+    m_textureMapper->endPainting();
+    m_context->swapBuffers();
+    return true;
 }
 
 } // namespace WebKit

@@ -91,6 +91,10 @@
 #endif
 #include <WebCore/ImageBuffer.h>
 #include "WebProcessDataStoreParameters.h"
+
+#if USE(GRAPHICS_LAYER_WC) && USE(GSTREAMER)
+#include "WCVideoLayerProxy.h"
+#endif
 #include "WebProcessMessages.h"
 #include "WebProcessProxyMessages.h"
 #include "WebResourceLoadObserver.h"
@@ -532,6 +536,11 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters,
 #endif
 
     platformInitializeWebProcess(parameters);
+
+#if USE(GRAPHICS_LAYER_WC) && USE(GSTREAMER)
+    // <video> frames go to the compositor as shared D3D11 textures (MyBrowser).
+    WCVideoLayerProxy::registerFactory();
+#endif
 
     // Match the QoS of the UIProcess and the scrolling thread but use a slightly lower priority.
     WTF::Thread::setCurrentThreadIsUserInteractive(-1);

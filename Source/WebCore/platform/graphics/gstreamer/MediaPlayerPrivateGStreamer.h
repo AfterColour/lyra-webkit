@@ -84,6 +84,10 @@ typedef struct _GstVideoInfo GstVideoInfo;
 
 namespace WebCore {
 
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+class AcceleratedVideoLayerWin;
+#endif
+
 class BitmapTexture;
 class GLContext;
 class GraphicsContext;
@@ -193,6 +197,10 @@ public:
     bool supportsAcceleratedRendering() const override { return true; }
     void setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&&) override;
     RefPtr<CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const override;
+#elif OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    // D3D11 video layer (see AcceleratedVideoLayerWin): frames stay on the GPU.
+    PlatformLayer* platformLayer() const override;
+    bool supportsAcceleratedRendering() const override;
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -345,8 +353,9 @@ protected:
     GstElement* createVideoSinkGL();
 #endif
 
-#if USE(COORDINATED_GRAPHICS)
+    // Used by triggerRepaint() on every port, not only with Coordinated Graphics.
     enum class IsDuplicateSample : bool { No, Yes };
+#if USE(COORDINATED_GRAPHICS)
     void pushTextureToCompositor(IsDuplicateSample, IsInitialBuffer = IsInitialBuffer::No);
 #endif
 
@@ -455,6 +464,13 @@ protected:
     mutable IntSize m_videoSizeFromCaps;
     mutable FloatSize m_videoSize;
     bool m_isUsingFallbackVideoSink { false };
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    bool pushD3D11Frame(GstBuffer*, GstCaps*);
+    bool isUsingD3D11VideoLayer() const { return m_d3d11VideoLayer && !m_d3d11VideoLayerFailed; }
+    void fallBackToSoftwareVideoPainting();
+    RefPtr<AcceleratedVideoLayerWin> m_d3d11VideoLayer;
+    std::atomic<bool> m_d3d11VideoLayerFailed { false };
+#endif
     bool m_canRenderingBeAccelerated { false };
 
     bool m_isBeingDestroyed WTF_GUARDED_BY_LOCK(m_drawLock) { false };

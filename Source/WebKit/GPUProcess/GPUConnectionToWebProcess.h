@@ -72,7 +72,11 @@
 #endif
 
 #if USE(GRAPHICS_LAYER_WC)
+#include "WCContentBufferIdentifier.h"
 #include "WCLayerTreeHostIdentifier.h"
+#if USE(GSTREAMER)
+#include <wtf/win/Win32Handle.h>
+#endif
 #endif
 
 #if ENABLE(IPC_TESTING_API)
@@ -121,6 +125,9 @@ struct RemoteAudioSessionConfiguration;
 
 #if USE(GRAPHICS_LAYER_WC)
 class RemoteWCLayerTreeHost;
+#if USE(GSTREAMER)
+class RemoteWCVideoSurface;
+#endif
 #endif
 
 #if ENABLE(VIDEO)
@@ -363,6 +370,13 @@ private:
 #if USE(GRAPHICS_LAYER_WC)
     void createWCLayerTreeHost(WebKit::WCLayerTreeHostIdentifier, uint64_t nativeWindow, bool usesOffscreenRendering);
     void releaseWCLayerTreeHost(WebKit::WCLayerTreeHostIdentifier);
+#if USE(GSTREAMER)
+    void getWCVideoAdapterLUID(CompletionHandler<void(int64_t)>&&);
+    void createWCVideoSurface(uint64_t identifier);
+    void setWCVideoSurfaceTextures(uint64_t identifier, Vector<Win32Handle>&&, uint32_t width, uint32_t height);
+    void presentWCVideoSurface(uint64_t identifier, uint32_t slot, CompletionHandler<void(std::optional<WCContentBufferIdentifier>, bool)>&&);
+    void releaseWCVideoSurface(uint64_t identifier);
+#endif
 #endif
 
     // IPC::Connection::Client
@@ -465,6 +479,10 @@ private:
 #if USE(GRAPHICS_LAYER_WC)
     using RemoteWCLayerTreeHostMap = HashMap<WCLayerTreeHostIdentifier, Ref<RemoteWCLayerTreeHost>>;
     RemoteWCLayerTreeHostMap m_remoteWCLayerTreeHostMap;
+#if USE(GSTREAMER)
+    // D3D11 video layers. Used on the main thread; the surfaces themselves work on remoteGraphicsStreamWorkQueue().
+    HashMap<uint64_t, Ref<RemoteWCVideoSurface>> m_remoteWCVideoSurfaceMap;
+#endif
 #endif
 
     RefPtr<RemoteRemoteCommandListenerProxy> m_remoteRemoteCommandListener;

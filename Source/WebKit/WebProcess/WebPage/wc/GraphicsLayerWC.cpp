@@ -165,6 +165,7 @@ GraphicsLayerWC::GraphicsLayerWC(Type layerType, GraphicsLayerClient& client, Ob
 
 GraphicsLayerWC::~GraphicsLayerWC()
 {
+    setPlatformLayerClient(false);
     willBeDestroyed();
     if (m_observer)
         m_observer->graphicsLayerRemoved(*this);
@@ -427,9 +428,33 @@ void GraphicsLayerWC::setContentsToPlatformLayer(PlatformLayer* platformLayer, C
     m_hasContentsDisplayDelegate = false;
     if (m_platformLayer == platformLayer)
         return;
+    setPlatformLayerClient(false);
     m_platformLayer = platformLayer;
+    setPlatformLayerClient(true);
     noteLayerPropertyChanged(WCLayerChange::PlatformLayer);
     updateDebugIndicators();
+}
+
+void GraphicsLayerWC::setPlatformLayerClient(bool set)
+{
+#if ENABLE(WEBGL)
+    auto* layer = static_cast<WCPlatformLayerGCGL*>(m_platformLayer);
+    if (layer && layer->notifiesContentsChanged())
+        layer->setClient(set ? this : nullptr);
+#else
+    UNUSED_PARAM(set);
+#endif
+}
+
+void GraphicsLayerWC::platformLayerWillBeDestroyed()
+{
+    m_platformLayer = nullptr;
+    noteLayerPropertyChanged(WCLayerChange::PlatformLayer);
+}
+
+void GraphicsLayerWC::setPlatformLayerNeedsDisplay()
+{
+    setContentsNeedsDisplay();
 }
 
 void GraphicsLayerWC::setContentsToPlatformLayerHost(WebCore::LayerHostingContextIdentifier identifier)

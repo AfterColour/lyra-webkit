@@ -55,6 +55,10 @@ public:
     void initialize(WCSceneContext&);
     std::optional<UpdateInfo> update(WCUpdateInfo&&);
 
+    // Paints the last committed layer tree again, for layers whose contents change without a
+    // layer tree update from the web process (the D3D11 video layer). On-screen scenes only.
+    bool recomposite();
+
 private:
     struct Layer;
     using LayerMap = HashMap<WebCore::PlatformLayerIdentifier, std::unique_ptr<Layer>>;
@@ -65,6 +69,9 @@ private:
     WebCore::TextureMapperFPSCounter m_fpsCounter;
     LayerMap m_layers;
     bool m_usesOffscreenRendering;
+    std::optional<WebCore::PlatformLayerIdentifier> m_lastRootLayer;
+    WebCore::IntSize m_lastViewport;
+    bool m_canRecomposite { false };
 };
 
 } // namespace WebKit

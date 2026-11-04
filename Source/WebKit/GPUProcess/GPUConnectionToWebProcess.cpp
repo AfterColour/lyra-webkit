@@ -167,6 +167,9 @@
 
 #if USE(GRAPHICS_LAYER_WC)
 #include "RemoteWCLayerTreeHost.h"
+#if USE(GSTREAMER)
+#include "RemoteWCVideoSurface.h"
+#endif
 #include "WCContentBufferManager.h"
 #include "WCRemoteFrameHostLayerManager.h"
 #endif
@@ -456,6 +459,14 @@ void GPUConnectionToWebProcess::didClose(IPC::Connection& connection)
     m_remoteGraphicsContextGLMap.clear();
 #endif
 #if USE(GRAPHICS_LAYER_WC)
+#if USE(GSTREAMER)
+    auto videoSurfaces = std::exchange(m_remoteWCVideoSurfaceMap, { });
+    for (auto& surface : videoSurfaces.values()) {
+        remoteGraphicsStreamWorkQueue().dispatch([surface = surface] {
+            surface->invalidate();
+        });
+    }
+#endif
     remoteGraphicsStreamWorkQueue().dispatch([webProcessIdentifier = m_webProcessIdentifier] {
 #if ENABLE(WEBGL)
         WCContentBufferManager::singleton().removeAllContentBuffersForProcess(webProcessIdentifier);
@@ -535,6 +546,56 @@ void GPUConnectionToWebProcess::releaseWCLayerTreeHost(WebKit::WCLayerTreeHostId
 {
     m_remoteWCLayerTreeHostMap.remove(identifier);
 }
+
+#if USE(GSTREAMER)
+void GPUConnectionToWebProcess::getWCVideoAdapterLUID(CompletionHandler<void(int64_t)>&& completionHandler)
+{
+    completionHandler(RemoteWCVideoSurface::angleAdapterLUID());
+}
+
+void GPUConnectionToWebProcess::createWCVideoSurface(uint64_t identifier)
+{
+    m_remoteWCVideoSurfaceMap.set(identifier, RemoteWCVideoSurface::create(m_webProcessIdentifier));
+}
+
+void GPUConnectionToWebProcess::setWCVideoSurfaceTextures(uint64_t identifier, Vector<Win32Handle>&& textures, uint32_t width, uint32_t height)
+{
+    RefPtr surface = m_remoteWCVideoSurfaceMap.get(identifier);
+    if (!surface)
+        return;
+    remoteGraphicsStreamWorkQueue().dispatch([surface = surface.releaseNonNull(), textures = WTF::move(textures), width, height]() mutable {
+        surface->setTextures(WTF::move(textures), width, height);
+    });
+}
+
+void GPUConnectionToWebProcess::presentWCVideoSurface(uint64_t identifier, uint32_t slot, CompletionHandler<void(std::optional<WCContentBufferIdentifier>, bool)>&& completionHandler)
+{
+    RefPtr surface = m_remoteWCVideoSurfaceMap.get(identifier);
+    if (!surface) {
+        completionHandler(std::nullopt, false);
+        return;
+    }
+    surface->willPresent();
+    remoteGraphicsStreamWorkQueue().dispatch([surface = surface.releaseNonNull(), slot, completionHandler = WTF::move(completionHandler)]() mutable {
+        auto contentBuffer = surface->present(slot);
+        bool succeeded = !surface->hasFailed();
+        RunLoop::mainSingleton().dispatch([contentBuffer, succeeded, completionHandler = WTF::move(completionHandler)]() mutable {
+            completionHandler(contentBuffer, succeeded);
+        });
+    });
+}
+
+void GPUConnectionToWebProcess::releaseWCVideoSurface(uint64_t identifier)
+{
+    RefPtr surface = m_remoteWCVideoSurfaceMap.take(identifier);
+    if (!surface)
+        return;
+    // Invalidate (and drop the last reference) on the thread that owns the GL and D3D11 resources.
+    remoteGraphicsStreamWorkQueue().dispatch([surface = surface.releaseNonNull()] {
+        surface->invalidate();
+    });
+}
+#endif
 #endif
 
 bool GPUConnectionToWebProcess::allowsExitUnderMemoryPressure() const

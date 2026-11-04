@@ -52,6 +52,9 @@ private:
     public:
         enum class Type : uint8_t {
             SystemMemory,
+#if OS(WINDOWS)
+            D3D11Memory, // Frames of the D3D11 video layer path; d3d11download first.
+#endif
 #if USE(GSTREAMER_GL)
             GLMemory,
             DMABufMemory
@@ -82,6 +85,9 @@ private:
     // share the pipelines, so the whole conversion is serialized by this lock.
     Lock m_lock;
     std::unique_ptr<Pipeline> m_systemMemoryPipeline WTF_GUARDED_BY_LOCK(m_lock);
+#if OS(WINDOWS)
+    std::unique_ptr<Pipeline> m_d3d11MemoryPipeline WTF_GUARDED_BY_LOCK(m_lock);
+#endif
 #if USE(GSTREAMER_GL)
     std::unique_ptr<Pipeline> m_glMemoryPipeline WTF_GUARDED_BY_LOCK(m_lock);
     std::unique_ptr<Pipeline> m_dmabufMemoryPipeline WTF_GUARDED_BY_LOCK(m_lock);

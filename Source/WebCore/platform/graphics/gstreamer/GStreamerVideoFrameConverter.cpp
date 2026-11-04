@@ -19,6 +19,7 @@
 
 #include "config.h"
 #include "GStreamerVideoFrameConverter.h"
+#include "MediaTraceWin.h"
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
 
@@ -61,6 +62,17 @@ GStreamerVideoFrameConverter::Pipeline::Pipeline(Type type)
         gst_element_link_many(m_src.get(), videoConvert.get(), m_sink.get(), nullptr);
         break;
     }
+#if OS(WINDOWS)
+    case Type::D3D11Memory: {
+        auto download = makeGStreamerElement("d3d11download"_s);
+        auto videoConvert = createVideoConvertScaleElement();
+        RELEASE_ASSERT(download && videoConvert);
+        m_pipeline = gst_element_factory_make("pipeline", "video-frame-converter-d3d11");
+        gst_bin_add_many(GST_BIN_CAST(m_pipeline.get()), m_src.get(), download, videoConvert.get(), m_sink.get(), nullptr);
+        gst_element_link_many(m_src.get(), download, videoConvert.get(), m_sink.get(), nullptr);
+        break;
+    }
+#endif
 #if USE(GSTREAMER_GL)
     case Type::GLMemory: {
         auto glcolorconvert = makeGStreamerElement("glcolorconvert"_s);
@@ -135,11 +147,20 @@ GRefPtr<GstSample> GStreamerVideoFrameConverter::Pipeline::run(const GRefPtr<Gst
     GRefPtr bus = adoptGRef(gst_element_get_bus(m_pipeline.get()));
     GRefPtr message = adoptGRef(gst_bus_timed_pop_filtered(bus.get(), 400 * GST_MSECOND, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_ASYNC_DONE)));
     if (!message) {
+        MEDIA_TRACE("400ms timeout");
         GST_ERROR_OBJECT(m_pipeline.get(), "Video frame conversion 400ms timeout expired.");
         return nullptr;
     }
 
     if (GST_MESSAGE_TYPE(message.get()) == GST_MESSAGE_ERROR) {
+        {
+            GUniqueOutPtr<GError> error;
+            GUniqueOutPtr<char> debug;
+            gst_message_parse_error(message.get(), &error.outPtr(), &debug.outPtr());
+            GUniquePtr<char> inCaps(gst_caps_to_string(gst_sample_get_caps(sample.get())));
+            GUniquePtr<char> outCaps(gst_caps_to_string(newCaps.get()));
+            MEDIA_TRACE("error: %s | %s | in=%s out=%s", error ? error->message : "?", debug.get() ? debug.get() : "", inCaps.get(), outCaps.get());
+        }
         GST_ERROR_OBJECT(m_pipeline.get(), "Unable to convert video frame. Error: %" GST_PTR_FORMAT, message.get());
         return nullptr;
     }
@@ -177,8 +198,14 @@ GStreamerVideoFrameConverter::Pipeline& GStreamerVideoFrameConverter::ensurePipe
 
     if (features && gst_caps_features_contains(features, GST_CAPS_FEATURE_MEMORY_GL_MEMORY))
         return ensure(m_glMemoryPipeline, Pipeline::Type::GLMemory);
-#else
+#elif !OS(WINDOWS)
     UNUSED_PARAM(caps);
+#endif
+
+#if OS(WINDOWS)
+    // [Win] decoded frames in D3D11 textures (d3d11 decoders): converted on the GPU.
+    if (auto* d3d11Features = gst_caps_get_features(caps, 0); d3d11Features && gst_caps_features_contains(d3d11Features, "memory:D3D11Memory"))
+        return ensure(m_d3d11MemoryPipeline, Pipeline::Type::D3D11Memory);
 #endif
 
     return ensure(m_systemMemoryPipeline, Pipeline::Type::SystemMemory);
@@ -215,6 +242,9 @@ void GStreamerVideoFrameConverter::releaseUnusedPipelinesTimerFired()
     };
 
     releaseIfUnused(m_systemMemoryPipeline);
+#if OS(WINDOWS)
+    releaseIfUnused(m_d3d11MemoryPipeline);
+#endif
 #if USE(GSTREAMER_GL)
     releaseIfUnused(m_glMemoryPipeline);
     releaseIfUnused(m_dmabufMemoryPipeline);

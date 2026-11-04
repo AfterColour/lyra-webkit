@@ -16,6 +16,34 @@ if (USE_DAWN)
     include(platform/Dawn.cmake)
 endif ()
 
+if (USE_GSTREAMER)
+    include(platform/GStreamer.cmake)
+
+    # MyBrowser: <video> frames as shared D3D11 textures (AcceleratedVideoLayerWin), using the
+    # GStreamer D3D11 library to get at the decoder's textures.
+    find_library(GSTREAMER_D3D11_LIBRARY NAMES gstd3d11-1.0 REQUIRED)
+    list(APPEND WebCore_SOURCES
+        platform/graphics/gstreamer/win/GStreamerD3D11Win.cpp
+
+        platform/graphics/win/AcceleratedVideoLayerWin.cpp
+    )
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+        "${WEBCORE_DIR}/platform/graphics/gstreamer/win"
+    )
+    list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+        platform/graphics/win/AcceleratedVideoLayerWin.h
+    )
+    # vcpkg does not install the generated gst/d3d11/gstd3d11config.h.
+    list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
+        "${WEBCORE_DIR}/platform/graphics/gstreamer/win/shim"
+    )
+    list(APPEND WebCore_PRIVATE_LIBRARIES
+        ${GSTREAMER_D3D11_LIBRARY}
+        d3d11
+        dxgi
+    )
+endif ()
+
 list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/accessibility/win"
     "${WEBCORE_DIR}/page/win"
@@ -123,6 +151,8 @@ list(APPEND WebCore_SOURCES
 
 list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     accessibility/win/AccessibilityObjectWrapperWin.h
+
+    platform/graphics/MediaTraceWin.h
 
     page/win/FrameWin.h
 
@@ -245,5 +275,7 @@ if (USE_WOFF2)
 endif ()
 
 if (USE_SKIA)
-    list(APPEND WebCore_PRIVATE_LIBRARIES ${SHARPYUV_LIBS})
+    # FontCacheSkiaWin.cpp calls DWriteCreateFactory. Upstream only gets dwrite through the
+    # MediaFoundation group above, which is absent when GStreamer is the media backend.
+    list(APPEND WebCore_PRIVATE_LIBRARIES ${SHARPYUV_LIBS} dwrite)
 endif ()

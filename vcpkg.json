@@ -21,6 +21,35 @@
         "cairo"
       ]
     },
+    "gstreamer": {
+      "description": "Build with the GStreamer media backend (MSE, D3D11 hardware decoding, FFmpeg software fallback)",
+      "dependencies": [
+        {
+          "name": "gstreamer",
+          "default-features": false,
+          "features": [
+            "gl",
+            "plugins-base",
+            "plugins-good",
+            "plugins-bad",
+            "libav"
+          ]
+        },
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [
+            "avcodec",
+            "avfilter",
+            "avformat",
+            "dav1d",
+            "swresample"
+          ]
+        },
+        "glib",
+        "pkgconf"
+      ]
+    },
     "jpeg-xl": {
       "description": "Build with JPEG XL image support",
       "dependencies": [

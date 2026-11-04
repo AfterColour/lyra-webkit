@@ -19,7 +19,7 @@
 #include "config.h"
 #include <wtf/glib/GRefPtr.h>
 
-#if USE(GLIB)
+#if USE(GLIB) || USE(GSTREAMER)
 #include <gio/gio.h>
 
 namespace WTF {
@@ -29,4 +29,4 @@ WTF_DEFINE_GREF_TRAITS(GResource, g_resource_ref, g_resource_unref)
 
 } // namespace WTF
 
-#endif // USE(GLIB)
+#endif // USE(GLIB) || USE(GSTREAMER)

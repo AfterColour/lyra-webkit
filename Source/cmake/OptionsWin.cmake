@@ -117,6 +117,21 @@ WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEBDRIVER PRIVATE ON)
 SET_AND_EXPOSE_TO_BUILD(ENABLE_WEBDRIVER_KEYBOARD_INTERACTIONS ON)
 SET_AND_EXPOSE_TO_BUILD(ENABLE_WEBDRIVER_MOUSE_INTERACTIONS ON)
 
+# Optional GStreamer media backend (MyBrowser). Off by default, so the regular
+# Media Foundation build is unchanged. With it on, media playback runs through
+# GStreamer, which brings Media Source Extensions (needed by YouTube & co).
+# GStreamer, GLib and FFmpeg come from vcpkg: add "gstreamer" to VCPKG_MANIFEST_FEATURES.
+WEBKIT_OPTION_DEFINE(USE_GSTREAMER "Use GStreamer for media playback (enables Media Source Extensions)" PUBLIC OFF)
+WEBKIT_OPTION_DEFINE(USE_GSTREAMER_GL "Whether to enable support for GStreamer GL" PRIVATE OFF)
+WEBKIT_OPTION_DEFINE(USE_GSTREAMER_MPEGTS "Whether to enable support for MPEG-TS" PRIVATE OFF)
+WEBKIT_OPTION_DEFINE(USE_GSTREAMER_FULL "Whether to enable support for static GStreamer builds" PRIVATE OFF)
+WEBKIT_OPTION_DEFINE(ENABLE_MEDIA_TELEMETRY "Whether to enable support for media telemetry" PRIVATE OFF)
+WEBKIT_OPTION_DEPEND(USE_GSTREAMER ENABLE_VIDEO)
+WEBKIT_OPTION_DEPEND(ENABLE_MEDIA_SOURCE USE_GSTREAMER)
+WEBKIT_OPTION_DEPEND(USE_GSTREAMER_GL USE_GSTREAMER)
+WEBKIT_OPTION_DEPEND(USE_GSTREAMER_MPEGTS USE_GSTREAMER)
+WEBKIT_OPTION_DEPEND(ENABLE_MEDIA_TELEMETRY USE_GSTREAMER)
+
 WEBKIT_OPTION_END()
 
 set(USE_ANGLE_EGL ON)
@@ -129,7 +144,11 @@ SET_AND_EXPOSE_TO_BUILD(USE_HARFBUZZ ON)
 SET_AND_EXPOSE_TO_BUILD(USE_OPENSSL ON)
 SET_AND_EXPOSE_TO_BUILD(USE_TEXTURE_MAPPER ON)
 SET_AND_EXPOSE_TO_BUILD(USE_THEME_ADWAITA ON)
-SET_AND_EXPOSE_TO_BUILD(USE_MEDIA_FOUNDATION ${ENABLE_VIDEO})
+if (ENABLE_VIDEO AND NOT USE_GSTREAMER)
+    SET_AND_EXPOSE_TO_BUILD(USE_MEDIA_FOUNDATION ON)
+else ()
+    SET_AND_EXPOSE_TO_BUILD(USE_MEDIA_FOUNDATION OFF)
+endif ()
 SET_AND_EXPOSE_TO_BUILD(USE_INSPECTOR_SOCKET_SERVER ${ENABLE_REMOTE_INSPECTOR})
 SET_AND_EXPOSE_TO_BUILD(HAVE_GL_FENCE ON)
 SET_AND_EXPOSE_TO_BUILD(ENABLE_DEVELOPER_MODE ${DEVELOPER_MODE})
@@ -143,6 +162,24 @@ cmake_pop_check_state()
 
 if (ENABLE_XSLT)
     find_package(LibXslt 1.1.32 REQUIRED)
+endif ()
+
+if (USE_GSTREAMER)
+    # FindGLib and FindGStreamer use pkg-config: point it at vcpkg's pkgconf and .pc files.
+    set(_webkit_vcpkg_prefix "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    find_program(PKG_CONFIG_EXECUTABLE NAMES pkgconf pkg-config
+        HINTS "${_webkit_vcpkg_prefix}/tools/pkgconf" "${_webkit_vcpkg_prefix}/tools/pkgconf/bin")
+    if (NOT PKG_CONFIG_EXECUTABLE)
+        message(FATAL_ERROR "pkg-config not found. Configure with VCPKG_MANIFEST_FEATURES containing \"gstreamer\".")
+    endif ()
+    set(ENV{PKG_CONFIG_PATH} "${_webkit_vcpkg_prefix}/lib/pkgconfig;${_webkit_vcpkg_prefix}/share/pkgconfig")
+
+    # GLib is only used as a library here (GObject/GIO for GStreamer). WebKit keeps the
+    # native Windows event loop: USE(GLIB) stays off on purpose, it would switch the
+    # run loop, timers, IPC and the network cache over to GLib.
+    find_package(GLib 2.70.0 REQUIRED COMPONENTS Gio Object)
+
+    include(GStreamerChecks)
 endif ()
 
 if (USE_AVIF)

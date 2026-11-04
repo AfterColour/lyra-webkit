@@ -118,6 +118,18 @@ list(APPEND WebKit_PRIVATE_LIBRARIES
     comctl32
 )
 
+if (USE_GSTREAMER)
+    # Shared/WebProcess code has USE(GSTREAMER) blocks that include GStreamer/GLib headers.
+    list(APPEND WebKit_SYSTEM_INCLUDE_DIRECTORIES
+        ${GSTREAMER_INCLUDE_DIRS}
+        ${GSTREAMER_PBUTILS_INCLUDE_DIRS}
+    )
+    list(APPEND WebKit_PRIVATE_LIBRARIES
+        GLib::Gio
+        ${GSTREAMER_LIBRARIES}
+    )
+endif ()
+
 list(APPEND WebProcess_SOURCES
     WebProcess/EntryPoint/win/WebProcessMain.cpp
 

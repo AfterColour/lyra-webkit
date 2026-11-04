@@ -291,8 +291,14 @@ void ImageDecoderGStreamer::storeDecodedSample(GRefPtr<GstSample>&& sample)
 void ImageDecoderGStreamer::pushEncodedData(const FragmentedSharedBuffer& sharedBuffer)
 {
     auto data = sharedBuffer.makeContiguous();
+#if USE(GLIB)
     auto bytes = data->createGBytes();
     GRefPtr buffer = adoptGRef(gst_buffer_new_wrapped_bytes(bytes.get()));
+#else
+    // Without USE(GLIB) there is no SharedBuffer/GBytes bridge: copy into the GstBuffer.
+    auto span = data->span();
+    GRefPtr buffer = adoptGRef(gst_buffer_new_memdup(span.data(), span.size()));
+#endif
     m_eos = false;
     m_error = false;
 

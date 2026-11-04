@@ -71,6 +71,16 @@ typedef struct _GstGLMemory GstGLMemory;
 
 namespace WebCore {
 
+#if OS(WINDOWS)
+// fnmatch() is POSIX-only. The patterns matched by WebKit (codec and element factory
+// names such as "avc1*" or "avdec_*") only use '*' and '?', which is exactly what
+// g_pattern_match_simple() implements. Same return convention as fnmatch: 0 = match.
+inline int fnmatch(const char* pattern, const char* string, int /* flags */)
+{
+    return g_pattern_match_simple(pattern, string) ? 0 : 1;
+}
+#endif
+
 class FloatSize;
 class IntSize;
 class SharedBuffer;

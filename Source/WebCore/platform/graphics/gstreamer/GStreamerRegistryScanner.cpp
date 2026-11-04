@@ -27,7 +27,9 @@
 #include "GStreamerCommon.h"
 #include "PlatformScreen.h"
 #include "ScreenProperties.h"
+#if !OS(WINDOWS)
 #include <fnmatch.h>
+#endif
 #include <gst/pbutils/codec-utils.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>

@@ -23,7 +23,9 @@
 
 #if USE(GSTREAMER)
 
+#if USE(GLIB)
 #include "ApplicationGLib.h"
+#endif
 #include "FloatSize.h"
 #include "GLVideoSinkGStreamer.h"
 #include "GStreamerAudioMixer.h"
@@ -38,15 +40,19 @@
 #include "SharedBuffer.h"
 #include "VideoSinkGStreamer.h"
 #include "WebKitAudioSinkGStreamer.h"
+#if !OS(WINDOWS)
 #include <fnmatch.h>
+#endif
 #include <mutex>
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
+#include <wtf/MainThread.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/MediaTime.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/PrintStream.h>
 #include <wtf/RecursiveLockAdapter.h>
+#include <wtf/RunLoop.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -489,7 +495,11 @@ bool ensureGStreamerInitialized()
         int argc = parameters.size() + 1;
         char** argv = g_new0(char*, argc + 1);
         auto argvSpan = unsafeMakeSpan(argv, argc);
+#if USE(GLIB) || PLATFORM(COCOA)
         argvSpan[0] = gStrdup(FileSystem::currentExecutableName());
+#else
+        argvSpan[0] = g_strdup("WebKitWebProcess");
+#endif
         for (auto [arg, parameter] : zippedRange(argvSpan.subspan(1), parameters))
             arg = gStrdup(parameter.utf8());
 
@@ -1108,6 +1118,108 @@ static GQuark customMessageHandlerQuark()
     return quark;
 }
 
+#if !USE(GLIB_EVENT_LOOP)
+// gst_bus_add_signal_watch() attaches a GSource to the thread-default GMainContext and
+// relies on a GLib main loop to dispatch it. Ports that do not run a GLib main loop
+// (Windows uses the native message pump) would never see a single bus message, so the
+// player would silently stall. BusMessageForwarder emulates the watch: every message
+// posted on the bus (from any thread) triggers, through the synchronous "sync-message"
+// signal, a drain task on WebKit's main run loop. The drain pops the queued messages and
+// re-emits each one as the regular asynchronous "message" signal, which is exactly what
+// the GLib bus watch does, so all "message" handlers keep working unchanged.
+class BusMessageForwarder final : public ThreadSafeRefCounted<BusMessageForwarder> {
+public:
+    static Ref<BusMessageForwarder> create(GRefPtr<GstBus>&& bus) { return adoptRef(*new BusMessageForwarder(WTF::move(bus))); }
+
+    void start()
+    {
+        gst_bus_enable_sync_message_emission(m_bus.get());
+        ref(); // Released by the closure notify once the signal handler is gone.
+        m_syncMessageHandler = g_signal_connect_data(m_bus.get(), "sync-message", G_CALLBACK(+[](GstBus*, GstMessage*, gpointer userData) {
+            static_cast<BusMessageForwarder*>(userData)->scheduleDrain();
+        }), this, reinterpret_cast<GClosureNotify>(+[](gpointer userData, GClosure*) {
+            static_cast<BusMessageForwarder*>(userData)->deref();
+        }), static_cast<GConnectFlags>(0));
+        // Messages may already be queued (posted before this watch existed).
+        scheduleDrain();
+    }
+
+    void stop()
+    {
+        m_isActive.store(false);
+        if (m_syncMessageHandler) {
+            g_signal_handler_disconnect(m_bus.get(), m_syncMessageHandler);
+            m_syncMessageHandler = 0;
+        }
+        gst_bus_disable_sync_message_emission(m_bus.get());
+    }
+
+private:
+    explicit BusMessageForwarder(GRefPtr<GstBus>&& bus)
+        : m_bus(WTF::move(bus))
+    {
+    }
+
+    void scheduleDrain()
+    {
+        if (!m_isActive.load() || m_drainScheduled.exchange(true))
+            return;
+        RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }] {
+            protectedThis->m_drainScheduled.store(false);
+            protectedThis->drain();
+        });
+    }
+
+    void drain()
+    {
+        ASSERT(isMainThread());
+        while (m_isActive.load()) {
+            GRefPtr message = adoptGRef(gst_bus_pop(m_bus.get()));
+            if (!message)
+                break;
+            gst_bus_async_signal_func(m_bus.get(), message.get(), nullptr);
+        }
+    }
+
+    GRefPtr<GstBus> m_bus;
+    gulong m_syncMessageHandler { 0 };
+    std::atomic<bool> m_isActive { true };
+    std::atomic<bool> m_drainScheduled { false };
+};
+
+static GQuark busMessageForwarderQuark()
+{
+    static GQuark quark = g_quark_from_static_string("pipeline-bus-message-forwarder");
+    return quark;
+}
+
+static void addBusSignalWatch(GstElement* pipeline, GstBus* bus)
+{
+    auto forwarder = BusMessageForwarder::create(GRefPtr<GstBus>(bus));
+    forwarder->start();
+    g_object_set_qdata_full(G_OBJECT(pipeline), busMessageForwarderQuark(), &forwarder.leakRef(), [](gpointer userData) {
+        static_cast<BusMessageForwarder*>(userData)->deref();
+    });
+}
+
+static void removeBusSignalWatch(GstElement* pipeline, GstBus*)
+{
+    if (auto* forwarder = static_cast<BusMessageForwarder*>(g_object_get_qdata(G_OBJECT(pipeline), busMessageForwarderQuark())))
+        forwarder->stop();
+    g_object_set_qdata(G_OBJECT(pipeline), busMessageForwarderQuark(), nullptr);
+}
+#else
+static void addBusSignalWatch(GstElement*, GstBus* bus)
+{
+    gst_bus_add_signal_watch_full(bus, RunLoopSourcePriority::RunLoopDispatcher);
+}
+
+static void removeBusSignalWatch(GstElement*, GstBus* bus)
+{
+    gst_bus_remove_signal_watch(bus);
+}
+#endif // !USE(GLIB_EVENT_LOOP)
+
 void disconnectSimpleBusMessageCallback(GstElement* pipeline)
 {
     auto handler = GPOINTER_TO_UINT(g_object_get_qdata(G_OBJECT(pipeline), customMessageHandlerQuark()));
@@ -1116,7 +1228,7 @@ void disconnectSimpleBusMessageCallback(GstElement* pipeline)
 
     GRefPtr bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(pipeline)));
     g_signal_handler_disconnect(bus.get(), handler);
-    gst_bus_remove_signal_watch(bus.get());
+    removeBusSignalWatch(pipeline, bus.get());
     g_object_set_qdata(G_OBJECT(pipeline), customMessageHandlerQuark(), nullptr);
 }
 
@@ -1150,7 +1262,7 @@ static void dumpPipeline(const GRefPtr<GstElement>& pipeline, String&& dotFileNa
 void connectSimpleBusMessageCallback(GstElement* pipeline, Function<void(GstMessage*)>&& customHandler, AsynchronousPipelineDumping asynchronousPipelineDumping)
 {
     GRefPtr bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(pipeline)));
-    gst_bus_add_signal_watch_full(bus.get(), RunLoopSourcePriority::RunLoopDispatcher);
+    addBusSignalWatch(pipeline, bus.get());
 
     auto data = createMessageBusData();
     data->pipeline.reset(pipeline);
@@ -1243,10 +1355,12 @@ IGNORE_WARNINGS_BEGIN("cast-align")
             GST_DEBUG("Set media.role as %s on %" GST_PTR_FORMAT, role->utf8(), GST_ELEMENT_CAST(object));
 IGNORE_WARNINGS_END
         }
+#if USE(GLIB)
         if (g_object_class_find_property(objectClass, "client-name")) {
             auto& clientName = getApplicationName();
             g_object_set(object, "client-name", clientName.ascii().data(), nullptr);
         }
+#endif
     }), role.isolatedCopy().releaseImpl().leakRef(), static_cast<GClosureNotify>([](gpointer userData, GClosure*) {
         if (auto* roleImpl = reinterpret_cast<StringImpl*>(userData))
             roleImpl->deref();
@@ -2372,7 +2486,8 @@ void gst_pad_probe_info_set_buffer(GstPadProbeInfo* info, GstBuffer* buffer)
 {
     g_return_if_fail(info->type & GST_PAD_PROBE_TYPE_BUFFER);
 
-    gst_clear_mini_object(&info->data);
+    if (info->data)
+        gst_mini_object_unref(GST_MINI_OBJECT_CAST(info->data));
     info->data = buffer;
 }
 
@@ -2380,7 +2495,8 @@ void gst_pad_probe_info_set_event(GstPadProbeInfo* info, GstEvent* event)
 {
     g_return_if_fail(info->type & (GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM | GST_PAD_PROBE_TYPE_EVENT_UPSTREAM));
 
-    gst_clear_mini_object(&info->data);
+    if (info->data)
+        gst_mini_object_unref(GST_MINI_OBJECT_CAST(info->data));
     info->data = event;
 }
 #endif

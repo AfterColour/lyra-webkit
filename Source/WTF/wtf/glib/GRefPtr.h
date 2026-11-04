@@ -23,7 +23,7 @@
 
 #pragma once
 
-#if USE(GLIB)
+#if USE(GLIB) || USE(GSTREAMER)
 
 #include <algorithm>
 #include <glib-object.h>
@@ -32,6 +32,10 @@
 extern "C" {
     typedef struct _GDBusConnection GDBusConnection;
     typedef struct _GDBusNodeInfo GDBusNodeInfo;
+    // GResource comes from GIO (gio/giotypes.h), which GTK/WPE builds always have
+    // included by the time this header is seen. Declare it so the GREF traits below
+    // also compile when only GLib/GObject headers are present (Windows + GStreamer).
+    typedef struct _GResource GResource;
 
     GDBusNodeInfo* g_dbus_node_info_ref(GDBusNodeInfo*);
     void g_dbus_node_info_unref(GDBusNodeInfo*);
@@ -382,4 +386,4 @@ WTF_DEFINE_GREF_TRAITS_INLINE(GVariant, g_variant_ref_sink, g_variant_unref, g_v
 using WTF::GRefPtr;
 using WTF::adoptGRef;
 
-#endif // USE(GLIB)
+#endif // USE(GLIB) || USE(GSTREAMER)

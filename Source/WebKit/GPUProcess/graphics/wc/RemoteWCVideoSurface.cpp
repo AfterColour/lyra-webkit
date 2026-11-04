@@ -27,7 +27,9 @@
 #include <WebCore/TextureMapper.h>
 #include <WebCore/TextureMapperFlags.h>
 #include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
+#include <mutex>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -76,6 +78,14 @@ static Microsoft::WRL::ComPtr<ID3D11Device1> angleD3D11Device()
 
     Microsoft::WRL::ComPtr<ID3D11Device1> device1;
     reinterpret_cast<ID3D11Device*>(d3d11Device)->QueryInterface(IID_PPV_ARGS(&device1));
+    // The device is driven from several GPU process threads (compositor, Skia rasterization):
+    // let the D3D11 runtime serialize use of its immediate context.
+    static std::once_flag protectOnce;
+    std::call_once(protectOnce, [&] {
+        Microsoft::WRL::ComPtr<ID3D11Multithread> multithread;
+        if (SUCCEEDED(reinterpret_cast<ID3D11Device*>(d3d11Device)->QueryInterface(IID_PPV_ARGS(&multithread))))
+            multithread->SetMultithreadProtected(TRUE);
+    });
     return device1;
 }
 

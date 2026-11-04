@@ -33,6 +33,7 @@
 #include "WCContentBufferManager.h"
 #include "WCRemoteFrameHostLayerManager.h"
 #include "WCSceneContext.h"
+#include "WCTileTextureRegistry.h"
 #include "WCUpdateInfo.h"
 #include <WebCore/BitmapTexturePool.h>
 #include <WebCore/NativeImage.h>
@@ -42,6 +43,7 @@
 #include <WebCore/TextureMapperLayer.h>
 #include <WebCore/TextureMapperPlatformLayer.h>
 #include <WebCore/TextureMapperSparseBackingStore.h>
+#include <WebCore/MediaTraceWin.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -108,6 +110,7 @@ WCScene::~WCScene()
 
 std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
 {
+    MEDIA_TRACE_TIME("GPU: scene update total");
     if (!m_context->makeContextCurrent())
         return std::nullopt;
     m_textureMapper->releaseUnusedTexturesNow();
@@ -119,21 +122,34 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
 
     for (auto& layerUpdate : update.changedLayers) {
         auto layer = m_layers.get(layerUpdate.id);
+        if (!layer) {
+            // MyBrowser: a layer this scene never got (out of sync with the web process); skip it
+            // rather than crash the GPU process.
+            MEDIA_TRACE("update for an unknown layer ignored");
+            continue;
+        }
         if (layerUpdate.changes & WCLayerChange::Children) {
-            layer->texmapLayer.setChildren(WTF::map(layerUpdate.children, [&](auto id) {
-                return &m_layers.get(id)->texmapLayer;
-            }));
+            Vector<WebCore::TextureMapperLayer*> children;
+            for (auto id : layerUpdate.children) {
+                if (auto child = m_layers.get(id))
+                    children.append(&child->texmapLayer);
+            }
+            layer->texmapLayer.setChildren(WTF::move(children));
         }
         if (layerUpdate.changes & WCLayerChange::MaskLayer) {
             WebCore::TextureMapperLayer* maskLayer = nullptr;
-            if (layerUpdate.maskLayer)
-                maskLayer = &m_layers.get(*layerUpdate.maskLayer)->texmapLayer;
+            if (layerUpdate.maskLayer) {
+                if (auto mask = m_layers.get(*layerUpdate.maskLayer))
+                    maskLayer = &mask->texmapLayer;
+            }
             layer->texmapLayer.setMaskLayer(maskLayer);
         }
         if (layerUpdate.changes & WCLayerChange::ReplicaLayer) {
             WebCore::TextureMapperLayer* replicaLayer = nullptr;
-            if (layerUpdate.replicaLayer)
-                replicaLayer = &m_layers.get(*layerUpdate.replicaLayer)->texmapLayer;
+            if (layerUpdate.replicaLayer) {
+                if (auto replica = m_layers.get(*layerUpdate.replicaLayer))
+                    replicaLayer = &replica->texmapLayer;
+            }
             layer->texmapLayer.setReplicaLayer(replicaLayer);
         }
         if (layerUpdate.changes & WCLayerChange::Position)
@@ -172,6 +188,22 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
                     if (tileUpdate.willRemove)
                         backingStore.removeTile(tileUpdate.index);
                     else {
+                        MEDIA_TRACE_TIME("GPU: upload tile");
+#if USE(SKIA)
+                        if (auto bufferIdentifier = tileUpdate.backingStore.acceleratedBufferIdentifier()) {
+                            // GPU-painted tile: copy texture to texture.
+                            auto entry = WCTileTextureRegistry::singleton().get(m_webProcessIdentifier, *bufferIdentifier);
+                            if (!entry)
+                                MEDIA_TRACE("GPU-painted tile %llu was not published", static_cast<unsigned long long>(bufferIdentifier->toUInt64()));
+                            else if (entry->textureID) {
+                                backingStore.updateContentsFromTexture(tileUpdate.index, entry->textureID, tileUpdate.dirtyRect);
+                            } else if (entry->image) {
+                                MEDIA_TRACE("tile from pixel copy");
+                                backingStore.updateContents(tileUpdate.index, *entry->image, tileUpdate.dirtyRect);
+                            }
+                            continue;
+                        }
+#endif
                         auto bitmap = tileUpdate.backingStore.bitmap();
                         if (bitmap) {
                             if (RefPtr image = WebCore::NativeImage::create(bitmap->createPlatformImage(WebCore::BackingStoreCopy::DontCopyBackingStore)))
@@ -250,10 +282,8 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
             if (layerUpdate.hostIdentifier) {
                 auto platformLayer = WCRemoteFrameHostLayerManager::singleton().acquireRemoteFrameHostLayer(*layerUpdate.hostIdentifier, m_webProcessIdentifier);
                 layer->texmapLayer.setContentsLayer(platformLayer);
-            } else {
-                ASSERT(layer->hostIdentifier);
+            } else if (layer->hostIdentifier)
                 WCRemoteFrameHostLayerManager::singleton().releaseRemoteFrameHostLayer(*layer->hostIdentifier);
-            }
             layer->hostIdentifier = layerUpdate.hostIdentifier;
         }
     }
@@ -261,7 +291,12 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
     for (auto id : update.removedLayers)
         m_layers.remove(id);
 
-    auto rootLayer = &m_layers.get(*update.rootLayer)->texmapLayer;
+    auto* rootLayerEntry = update.rootLayer ? m_layers.get(*update.rootLayer) : nullptr;
+    if (!rootLayerEntry) {
+        MEDIA_TRACE("update without a known root layer ignored");
+        return std::nullopt;
+    }
+    auto rootLayer = &rootLayerEntry->texmapLayer;
     rootLayer->applyAnimationsRecursively(MonotonicTime::now());
 
     m_lastRootLayer = *update.rootLayer;
@@ -309,8 +344,10 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
             result->updateRects.append(viewport);
             result->bitmapHandle = WTF::move(*handle);
         }
-    } else
+    } else {
+        MEDIA_TRACE_TIME("GPU: swapBuffers (vsync wait)");
         m_context->swapBuffers();
+    }
     return result;
 }
 

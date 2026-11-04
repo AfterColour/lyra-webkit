@@ -42,6 +42,8 @@
 #include "WebPreferencesKeys.h"
 #include "WebProcess.h"
 #include <WebCore/ImageBuffer.h>
+#include <WebCore/MediaTraceWin.h>
+#include <cstdlib>
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
@@ -54,15 +56,34 @@ using namespace WebCore;
 
 DrawingAreaWC::DrawingAreaWC(WebPage& webPage, const WebPageCreationParameters& parameters)
     : DrawingArea(parameters.drawingAreaIdentifier, webPage)
-    , m_remoteWCLayerTreeHostProxy(makeUniqueWithoutRefCountedCheck<RemoteWCLayerTreeHostProxy>(webPage, parameters.usesOffscreenRendering))
+    , m_remoteWCLayerTreeHostProxy(adoptRef(*new RemoteWCLayerTreeHostProxy(webPage, parameters.usesOffscreenRendering)))
     , m_layerFactory(*this)
     , m_updateRenderingTimer(*this, &DrawingAreaWC::updateRendering)
     , m_commitQueue(WorkQueue::create("DrawingAreaWC CommitQueue"_s))
 {
+    m_remoteWCLayerTreeHostProxy->setDidLoseGPUProcessHandler([this, weakThis = WeakPtr(*this)] {
+        if (weakThis)
+            resyncAfterGPUProcessLoss();
+    });
+}
+
+void DrawingAreaWC::resyncAfterGPUProcessLoss()
+{
+    MEDIA_TRACE("GPU process lost: resending %u layers", static_cast<unsigned>(m_liveGraphicsLayers.size()));
+    ++m_compositorGeneration;
+    // Buffers of the old GPU process are gone with it.
+    m_freeTileBuffers.clear();
+    m_updateInfo = { };
+    for (auto* layer = m_liveGraphicsLayers.head(); layer; layer = layer->next()) {
+        m_updateInfo.addedLayers.append(*layer->primaryLayerID());
+        layer->resyncWithNewCompositor();
+    }
+    triggerRenderingUpdate();
 }
 
 DrawingAreaWC::~DrawingAreaWC()
 {
+    m_remoteWCLayerTreeHostProxy->setDidLoseGPUProcessHandler({ });
     while (auto layer = m_liveGraphicsLayers.removeHead())
         layer->clearObserver();
 }
@@ -118,11 +139,18 @@ void DrawingAreaWC::attachViewOverlayGraphicsLayer(WebCore::FrameIdentifier fram
     }
 }
 
+static bool gpuPaintedTiles();
+
 void DrawingAreaWC::updatePreferences(const WebPreferencesStore& store)
 {
     Settings& settings = m_webPage->corePage()->settings();
     settings.setAcceleratedCompositingForFixedPositionEnabled(settings.acceleratedCompositingEnabled());
-    settings.setForceCompositingMode(store.getBoolValueForKey(WebPreferencesKey::siteIsolationEnabledKey()));
+    // MyBrowser: with GPU-painted tiles, always composite. Otherwise a page without compositing
+    // layers is painted on the CPU into one big bitmap every frame (sendUpdateNonAC), and pages
+    // that gain and lose layers flash white while switching between the two modes.
+    settings.setForceCompositingMode(store.getBoolValueForKey(WebPreferencesKey::siteIsolationEnabledKey())
+        || store.getBoolValueForKey(WebPreferencesKey::forceCompositingModeKey())
+        || (settings.acceleratedCompositingEnabled() && gpuPaintedTiles()));
 }
 
 bool DrawingAreaWC::shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView& frameView) const
@@ -238,8 +266,23 @@ void DrawingAreaWC::updateRendering()
     ASSERT(!m_waitDidUpdate);
     m_waitDidUpdate = true;
 
+#if OS(WINDOWS) && USE(GSTREAMER)
+    // MyBrowser: frame pipeline timings (MYBROWSER_MEDIA_TRACE).
+    {
+        static double lastStart = -1;
+        double now = MonotonicTime::now().secondsSinceEpoch().milliseconds();
+        if (lastStart >= 0)
+            mediaTraceTiming("WP: rendering update interval", now - lastStart);
+        lastStart = now;
+        m_traceUpdateStart = now;
+    }
+#endif
+
     Ref webPage = m_webPage.get();
-    webPage->updateRendering();
+    {
+        MEDIA_TRACE_TIME("WP: updateRendering (rAF/style/layout)");
+        webPage->updateRendering();
+    }
     webPage->flushPendingEditorStateUpdate();
 
     OptionSet<FinalizeRenderingUpdateFlags> flags;
@@ -248,6 +291,7 @@ void DrawingAreaWC::updateRendering()
 
     willStartRenderingUpdateDisplay();
 
+    MEDIA_TRACE_TIME("WP: commit layers + record paint");
     if (isCompositingMode())
         sendUpdateAC();
     else
@@ -286,15 +330,34 @@ void DrawingAreaWC::sendUpdateAC()
             rootLayer.viewOverlayRootLayer->flushCompositingState(visibleRect);
 
         auto fence = m_webPage->ensureRemoteRenderingBackendProxy().flushImageBuffers();
+        auto tileBuffers = takeTileBuffers(m_updateInfo);
 
-        m_commitQueue->dispatch([this, weakThis = WeakPtr(*this), stateID = m_backingStoreStateID, updateInfo = std::exchange(m_updateInfo, { }), fence = WTF::move(fence), willCallDisplayDidRefresh]() mutable {
-            fence();
-            RunLoop::mainSingleton().dispatch([this, weakThis = WTF::move(weakThis), stateID, updateInfo = WTF::move(updateInfo), willCallDisplayDidRefresh]() mutable {
+        m_commitQueue->dispatch([this, weakThis = WeakPtr(*this), stateID = m_backingStoreStateID, updateInfo = std::exchange(m_updateInfo, { }), fence = WTF::move(fence), willCallDisplayDidRefresh, tileBuffers = WTF::move(tileBuffers), generation = m_compositorGeneration]() mutable {
+            {
+                MEDIA_TRACE_TIME("WP: wait for GPU process paint (fence)");
+                fence();
+            }
+            RunLoop::mainSingleton().dispatch([this, weakThis = WTF::move(weakThis), stateID, updateInfo = WTF::move(updateInfo), willCallDisplayDidRefresh, tileBuffers = WTF::move(tileBuffers), generation]() mutable {
                 if (!weakThis)
                     return;
-                m_remoteWCLayerTreeHostProxy->update(WTF::move(updateInfo), [this, weakThis = WTF::move(weakThis), stateID, willCallDisplayDidRefresh](std::optional<UpdateInfo> updateInfo) {
+                if (generation != m_compositorGeneration) {
+                    // Painted for a GPU process that is gone; the resync repaints everything.
+                    if (willCallDisplayDidRefresh)
+                        displayDidRefresh();
+                    return;
+                }
+                double sentAt = MonotonicTime::now().secondsSinceEpoch().milliseconds();
+                m_remoteWCLayerTreeHostProxy->update(WTF::move(updateInfo), [this, weakThis = WTF::move(weakThis), stateID, willCallDisplayDidRefresh, sentAt, tileBuffers = WTF::move(tileBuffers), generation](std::optional<UpdateInfo> updateInfo) mutable {
+#if OS(WINDOWS) && USE(GSTREAMER)
+                    mediaTraceTiming("WP: scene update round trip", MonotonicTime::now().secondsSinceEpoch().milliseconds() - sentAt);
+#else
+                    UNUSED_PARAM(sentAt);
+#endif
                     if (!weakThis)
                         return;
+                    // The scene has uploaded these tiles; their buffers can be painted into again.
+                    if (generation == m_compositorGeneration)
+                        recycleTileBuffers(WTF::move(tileBuffers));
                     if (updateInfo && stateID == m_backingStoreStateID) {
                         ASSERT(willCallDisplayDidRefresh);
                         send(Messages::DrawingAreaProxy::Update(m_backingStoreStateID, WTF::move(*updateInfo)));
@@ -345,7 +408,12 @@ void DrawingAreaWC::sendUpdateNonAC()
     ASSERT(webPage->bounds().contains(bounds));
     IntSize bitmapSize = bounds.size();
     float deviceScaleFactor = webPage->corePage()->deviceScaleFactor();
-    auto image = createImageBuffer(bitmapSize, deviceScaleFactor);
+    // The non-composited path hands the pixels to the UI process: always a shareable bitmap.
+    RefPtr<ImageBuffer> image;
+    if (WebProcess::singleton().shouldUseRemoteRenderingFor(RenderingPurpose::DOM))
+        image = webPage->ensureRemoteRenderingBackendProxy().createImageBuffer(bitmapSize, RenderingMode::Unaccelerated, RenderingPurpose::DOM, deviceScaleFactor, ColorSpace::SRGB(), { PixelFormat::BGRA8 });
+    else
+        image = createImageBuffer(bitmapSize, deviceScaleFactor);
     auto rects = m_dirtyRegion.rects();
     if (shouldPaintBoundsRect(bounds, rects)) {
         rects.clear();
@@ -409,15 +477,89 @@ void DrawingAreaWC::commitLayerUpdateInfo(WCLayerUpdateInfo&& info)
     m_updateInfo.changedLayers.append(WTF::move(info));
 }
 
+// MyBrowser: page tiles painted with Skia on the GPU in the GPU process (see WCTileTextureRegistry).
+// MYBROWSER_DISABLE_GPU_RASTER=1 goes back to CPU-painted shared-memory tiles.
+static bool gpuPaintedTiles()
+{
+    static bool enabled = [] {
+        const char* value = std::getenv("MYBROWSER_DISABLE_GPU_RASTER");
+        return !(value && *value == '1');
+    }();
+    return enabled;
+}
+
+static bool tilePoolEnabled()
+{
+    static bool enabled = [] {
+        const char* value = std::getenv("MYBROWSER_DISABLE_TILE_POOL");
+        return !(value && *value == '1');
+    }();
+    return enabled;
+}
+
+Vector<RefPtr<ImageBuffer>> DrawingAreaWC::takeTileBuffers(WCUpdateInfo& updateInfo)
+{
+    Vector<RefPtr<ImageBuffer>> buffers;
+    if (!tilePoolEnabled())
+        return buffers;
+    for (auto& layer : updateInfo.changedLayers) {
+        for (auto& tile : layer.background.tileUpdates) {
+            if (auto* buffer = tile.backingStore.imageBuffer())
+                buffers.append(buffer);
+        }
+    }
+    return buffers;
+}
+
+void DrawingAreaWC::recycleTileBuffers(Vector<RefPtr<ImageBuffer>>&& buffers)
+{
+    // Keep at most ~64 MB of idle tile memory; the oldest buffers go first.
+    constexpr double maximumPooledBytes = 64 * 1024 * 1024;
+    for (auto& buffer : buffers) {
+        if (buffer)
+            m_freeTileBuffers.append(WTF::move(buffer));
+    }
+    double bytes = 0;
+    for (auto& buffer : m_freeTileBuffers) {
+        auto size = buffer->backendSize();
+        bytes += 4.0 * size.width() * size.height();
+    }
+    while (bytes > maximumPooledBytes && !m_freeTileBuffers.isEmpty()) {
+        auto size = m_freeTileBuffers.first()->backendSize();
+        bytes -= 4.0 * size.width() * size.height();
+        m_freeTileBuffers.removeAt(0);
+    }
+}
+
 RefPtr<ImageBuffer> DrawingAreaWC::createImageBuffer(FloatSize size, float deviceScaleFactor)
 {
+    if (tilePoolEnabled()) {
+        for (size_t i = 0; i < m_freeTileBuffers.size(); ++i) {
+            auto& candidate = m_freeTileBuffers[i];
+            if (candidate->logicalSize() != size || candidate->resolutionScale() != deviceScaleFactor)
+                continue;
+            RefPtr buffer = WTF::move(candidate);
+            m_freeTileBuffers.removeAt(i);
+            // Painting may leave pixels untouched (transparent layers): start from a clear buffer
+            // like a newly allocated one.
+            buffer->context().clearRect({ { }, size });
+            MEDIA_TRACE_TIME("WP: tile buffer reused");
+            return buffer;
+        }
+        MEDIA_TRACE_TIME("WP: tile buffer allocated");
+    }
+
     if (WebProcess::singleton().shouldUseRemoteRenderingFor(RenderingPurpose::DOM))
-        return Ref { m_webPage.get() }->ensureRemoteRenderingBackendProxy().createImageBuffer(size, RenderingMode::Unaccelerated, RenderingPurpose::DOM, deviceScaleFactor, ColorSpace::SRGB(), { PixelFormat::BGRA8 });
+        return Ref { m_webPage.get() }->ensureRemoteRenderingBackendProxy().createImageBuffer(size, gpuPaintedTiles() ? RenderingMode::Accelerated : RenderingMode::Unaccelerated, RenderingPurpose::DOM, deviceScaleFactor, ColorSpace::SRGB(), { PixelFormat::BGRA8 });
     return ImageBuffer::create<ImageBufferShareableBitmapBackend>(size, deviceScaleFactor, ColorSpace::SRGB(), { PixelFormat::BGRA8 }, RenderingPurpose::DOM, { });
 }
 
 void DrawingAreaWC::displayDidRefresh(MonotonicTime)
 {
+#if OS(WINDOWS) && USE(GSTREAMER)
+    if (m_traceUpdateStart >= 0)
+        mediaTraceTiming("WP: frame total (start -> displayed)", MonotonicTime::now().secondsSinceEpoch().milliseconds() - m_traceUpdateStart);
+#endif
     m_waitDidUpdate = false;
     didCompleteRenderingUpdateDisplay();
     didCompleteRenderingFrame();

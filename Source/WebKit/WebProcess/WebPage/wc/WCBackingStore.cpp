@@ -36,15 +36,23 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WCBackingStore);
 
-WCBackingStore::WCBackingStore(std::optional<ImageBufferBackendHandle>&& handle)
+WCBackingStore::WCBackingStore(std::optional<ImageBufferBackendHandle>&& handle, std::optional<WebCore::RenderingResourceIdentifier>&& acceleratedBufferIdentifier)
+    : m_acceleratedBufferIdentifier(WTF::move(acceleratedBufferIdentifier))
 {
     if (auto* imageHandle = handle ? std::get_if<WebCore::ShareableBitmap::Handle>(&*handle) : nullptr)
         m_bitmap = WebCore::ShareableBitmap::create(WTF::move(*imageHandle));
 }
 
+std::optional<WebCore::RenderingResourceIdentifier> WCBackingStore::acceleratedBufferIdentifier() const
+{
+    if (m_imageBuffer)
+        return m_imageBuffer->renderingMode() == WebCore::RenderingMode::Accelerated ? std::optional { m_imageBuffer->renderingResourceIdentifier() } : std::nullopt;
+    return m_acceleratedBufferIdentifier;
+}
+
 std::optional<ImageBufferBackendHandle> WCBackingStore::handle() const
 {
-    if (!m_imageBuffer)
+    if (!m_imageBuffer || m_imageBuffer->renderingMode() == WebCore::RenderingMode::Accelerated)
         return std::nullopt;
 
     auto* sharing = m_imageBuffer->toBackendSharing();

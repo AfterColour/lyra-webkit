@@ -19,6 +19,7 @@
 #include "libANGLE/GlobalMutex.h"
 #include "libANGLE/Thread.h"
 #include "libANGLE/features.h"
+#include "libANGLE/renderer/ContextImpl.h"
 #include "libANGLE/validationEGL.h"
 
 #if defined(ANGLE_PLATFORM_APPLE) || (ANGLE_PLATFORM_ANDROID) || defined(ANGLE_USE_ANDROID_TLS_SLOT)
@@ -166,6 +167,11 @@ static ANGLE_INLINE void DirtyContextIfNeeded(Context *context)
     if (context && context != egl::GetGlobalLastContext())
     {
         context->dirtyAllState();
+        // MyBrowser: the backend's state manager is shared by every context of the display and
+        // caches pointers to the last context's program, vertex array and framebuffer (D3D11:
+        // StateManager11::onMakeCurrent resets them). Do what a real context switch does, or the
+        // next draw uses objects of the other context, which may be gone.
+        (void)context->getImplementation()->onMakeCurrent(context);
         SetGlobalLastContext(context);
     }
 }

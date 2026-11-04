@@ -46,9 +46,10 @@ class ImageBufferSkiaAcceleratedBackend final : public ImageBufferSkiaSurfaceBac
     WTF_MAKE_TZONE_ALLOCATED(ImageBufferSkiaAcceleratedBackend);
     WTF_MAKE_NONCOPYABLE(ImageBufferSkiaAcceleratedBackend);
 public:
-    static std::unique_ptr<ImageBufferSkiaAcceleratedBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
+    // Exported for the GPU process' RemoteRenderingBackend (Windows, MyBrowser).
+    WEBCORE_EXPORT static std::unique_ptr<ImageBufferSkiaAcceleratedBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
     static std::unique_ptr<ImageBufferSkiaAcceleratedBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&, sk_sp<SkSurface>&&);
-    ~ImageBufferSkiaAcceleratedBackend();
+    WEBCORE_EXPORT ~ImageBufferSkiaAcceleratedBackend();
 
     RenderingMode renderingMode() const final { return RenderingMode::Accelerated; }
 

@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "GraphicsLayerWC.h"
+#include <WebCore/MediaTraceWin.h>
 
 #if USE(GRAPHICS_LAYER_WC)
 
@@ -65,10 +66,17 @@ public:
             IntRect scaledDirtyRect = dirtyRect;
             scaledDirtyRect.scale(deviceScaleFactor);
             tileUpdate.dirtyRect = scaledDirtyRect;
+#if OS(WINDOWS) && USE(GSTREAMER)
+            WebCore::mediaTraceTiming("WP: repainted tile area (kpx)", dirtyRect.width() * dirtyRect.height() * deviceScaleFactor * deviceScaleFactor / 1000.0);
+#endif
             auto image = m_owner.createImageBuffer(dirtyRect.size(), deviceScaleFactor);
             auto& context = image->context();
-            context.translate(-dirtyRect.x(), -dirtyRect.y());
-            m_owner.paintGraphicsLayerContents(context, dirtyRect);
+            {
+                // Tile buffers are reused (DrawingAreaWC): leave the context state as it was.
+                GraphicsContextStateSaver stateSaver(context);
+                context.translate(-dirtyRect.x(), -dirtyRect.y());
+                m_owner.paintGraphicsLayerContents(context, dirtyRect);
+            }
             image->flushDrawingContextAsync();
             tileUpdate.backingStore.setImageBuffer(WTF::move(image));
             update.background.tileUpdates.append(WTF::move(tileUpdate));
@@ -289,6 +297,26 @@ void GraphicsLayerWC::setAnchorPoint(const FloatPoint3D& point)
         return;
     GraphicsLayer::setAnchorPoint(point);
     noteLayerPropertyChanged(WCLayerChange::AnchorPoint);
+}
+
+void GraphicsLayerWC::resyncWithNewCompositor()
+{
+    // The new scene has no tiles: forget ours so that every tile is painted in full again.
+    m_tiledBacking->setSize(size());
+    OptionSet<WCLayerChange> everything {
+        WCLayerChange::Children, WCLayerChange::MaskLayer, WCLayerChange::ReplicaLayer, WCLayerChange::Position,
+        WCLayerChange::AnchorPoint, WCLayerChange::Size, WCLayerChange::BoundsOrigin, WCLayerChange::MasksToBounds,
+        WCLayerChange::ContentsRectClipsDescendants, WCLayerChange::ShowDebugBorder, WCLayerChange::ShowRepaintCounter,
+        WCLayerChange::ContentsVisible, WCLayerChange::BackfaceVisibility, WCLayerChange::Preserves3D,
+        WCLayerChange::SolidColor, WCLayerChange::DebugBorderColor, WCLayerChange::Opacity, WCLayerChange::DebugBorderWidth,
+        WCLayerChange::RepaintCount, WCLayerChange::ContentsRect, WCLayerChange::Background, WCLayerChange::Transform,
+        WCLayerChange::ChildrenTransform, WCLayerChange::Filters, WCLayerChange::BackdropFilters,
+        WCLayerChange::BackdropFiltersRect, WCLayerChange::ContentsClippingRect, WCLayerChange::PlatformLayer
+    };
+    // "No remote frame" tells the scene to release one, so only send it when there is one.
+    if (m_hostIdentifier)
+        everything.add(WCLayerChange::RemoteFrame);
+    noteLayerPropertyChanged(everything, DontScheduleFlush);
 }
 
 void GraphicsLayerWC::setSize(const FloatSize& size)
@@ -622,8 +650,12 @@ void GraphicsLayerWC::flushCompositingStateForThisLayerOnly()
                 incrementRepaintCount();
                 update.changes.add(WCLayerChange::RepaintCount);
             }
-        } else
+        } else {
             update.background.hasBackingStore = false;
+            // The scene drops this layer's tiles (WCScene::update); when the layer draws again,
+            // every tile must be painted in full, not only what got dirty since.
+            m_tiledBacking->setSize(size());
+        }
     }
     if (update.changes & WCLayerChange::SolidColor)
         update.solidColor = m_solidColor;

@@ -39,6 +39,9 @@ public:
     inline void setRect(const FloatRect& rect) { m_rect = rect; }
 
     void updateContents(NativeImage&, const IntRect&);
+    // Copies from a GL texture of the current context's share group whose (0, 0) is the
+    // top-left corner of `dirtyRect` (GPU-painted tiles, Windows compositor).
+    void updateContentsFromTexture(unsigned textureID, const IntRect& dirtyRect);
     void updateContents(GraphicsLayer*, const IntRect&, float scale = 1);
     WEBCORE_EXPORT virtual void paint(TextureMapper&, const TransformationMatrix&, float, bool allEdgesExposed);
     virtual ~TextureMapperTile();

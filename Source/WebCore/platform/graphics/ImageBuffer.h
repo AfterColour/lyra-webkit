@@ -192,7 +192,7 @@ public:
 #endif
 
 #if USE(SKIA)
-    SkSurface* surface() const;
+    WEBCORE_EXPORT SkSurface* surface() const;
 #endif
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)

@@ -49,6 +49,11 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #endif
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
+#include <cstdlib>
+#include "MediaTraceWin.h"
+#if PLATFORM(WIN)
+#include "SkiaGLContextWin.h"
+#endif
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RAMSize.h>
@@ -346,8 +351,16 @@ private:
         // lookup which is a slow-path in certain tiled GPUs (such as Vivante/etnaviv). Since we
         // don't use any mipmapping, it's safe to disable that, and avoid performance hits.
         options.fSharpenMipmappedTextures = false;
+#if PLATFORM(WIN)
+        // MyBrowser: on Windows, thread_local destructors run at thread exit under the loader lock,
+        // and ~SkThreadPool joins its threads, which need that lock to exit: the GPU process hung
+        // forever when a rendering thread ended. One pool for the process, never destroyed.
+        static SkExecutor* s_executor = SkExecutor::MakeFIFOThreadPool(2).release();
+        options.fExecutor = s_executor;
+#else
         thread_local std::unique_ptr<SkExecutor> s_executor = SkExecutor::MakeFIFOThreadPool(2);
         options.fExecutor = s_executor.get();
+#endif
         if (auto bytes = glyphCacheTextureMaximumBytes())
             options.fGlyphCacheTextureMaximumBytes = *bytes;
 
@@ -367,12 +380,32 @@ private:
 };
 #endif
 
+#if PLATFORM(WIN)
+// MyBrowser: Skia's GL backend on ANGLE (D3D11) for accelerated ImageBuffers in the GPU process:
+// page tiles and canvas are painted on the GPU. MYBROWSER_DISABLE_GPU_RASTER=1 turns it off.
+static bool skiaGLEnabledOnWindows()
+{
+    static bool enabled = [] {
+        const char* value = std::getenv("MYBROWSER_DISABLE_GPU_RASTER");
+        return !(value && *value == '1');
+    }();
+    return enabled;
+}
+#endif
+
 GLContext* PlatformDisplay::skiaGLContext()
 {
-#if PLATFORM(GTK) || PLATFORM(WPE) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
+#if PLATFORM(WIN)
+    if (!skiaGLEnabledOnWindows())
+        return nullptr;
+#endif
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN) || (PLATFORM(PLAYSTATION) && !USE(COORDINATED_GRAPHICS))
     if (!s_skiaGLContext) {
         s_skiaGLContext = SkiaGLContext::create(*this);
         m_skiaGLContexts.add(*s_skiaGLContext);
+#if PLATFORM(WIN)
+        MEDIA_TRACE("Skia GL context for this thread: GL=%d GrContext=%d", !!s_skiaGLContext->skiaGLContext(), !!s_skiaGLContext->skiaGrContext());
+#endif
     }
     return s_skiaGLContext->skiaGLContext();
 #else
@@ -432,6 +465,15 @@ void PlatformDisplay::clearSkiaGLContext()
 {
     s_skiaGLContext = nullptr;
 }
+
+#if PLATFORM(WIN)
+void releaseSkiaGLContextForCurrentThread()
+{
+    // Tear the context down while the thread can still make GL calls normally, instead of in a
+    // thread_local destructor at thread exit (under the loader lock).
+    s_skiaGLContext = nullptr;
+}
+#endif
 
 } // namespace WebCore
 

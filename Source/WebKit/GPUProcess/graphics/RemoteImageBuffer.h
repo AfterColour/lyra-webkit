@@ -96,6 +96,17 @@ private:
     IPC::ScopedActiveMessageReceiveQueue<RemoteImageBufferGraphicsContext> m_context;
     ScopedRenderingResourcesRequest m_renderingResourcesRequest { ScopedRenderingResourcesRequest::acquire() };
     std::optional<IPC::Signal> m_flushSignal;
+
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+public:
+    // A page tile the web process asked to paint on the GPU (MyBrowser, see WCTileTextureRegistry).
+    void setPublishesTileForWCScene() { m_publishesTileForWCScene = true; }
+    bool isAcceleratedForTrace() const { return m_imageBuffer->renderingMode() == WebCore::RenderingMode::Accelerated; }
+private:
+    void publishTileForWCScene();
+    bool m_publishesTileForWCScene { false };
+    bool m_publishedTileForWCScene { false };
+#endif
 };
 
 } // namespace WebKit

@@ -154,6 +154,8 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/MediaTraceWin.h
 
+    platform/graphics/skia/SkiaGLContextWin.h
+
     page/win/FrameWin.h
 
     platform/graphics/opentype/FontMemoryResource.h

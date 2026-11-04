@@ -52,6 +52,8 @@ public:
     ~GraphicsLayerWC() override;
 
     void clearObserver() { m_observer = nullptr; }
+    // MyBrowser: the compositor (GPU process) was replaced; send everything again on the next flush.
+    void resyncWithNewCompositor();
 
     // GraphicsLayer
     NODELETE std::optional<WebCore::PlatformLayerIdentifier> primaryLayerID() const override;

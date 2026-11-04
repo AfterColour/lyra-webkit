@@ -90,6 +90,19 @@ set(ANGLE_PRIVATE_INCLUDE_DIRECTORIES
     "${CMAKE_CURRENT_BINARY_DIR}/include"
 )
 
+# MyBrowser (Windows): the GPU process uses one share group from several threads (Skia GPU
+# rasterization on the rendering backend queues, compositing on the WCScene queue). Serialize
+# every GL call with ANGLE's global lock, and re-sync the backend state when the calling context
+# changes, since all contexts share one D3D11 device and its state cache.
+set(ANGLE_THREAD_SAFETY_DEFINITIONS)
+if (WIN32)
+    set(ANGLE_THREAD_SAFETY_DEFINITIONS
+        ANGLE_ENABLE_SHARE_CONTEXT_LOCK=1
+        ANGLE_FORCE_CONTEXT_CHECK_EVERY_CALL=1
+        ANGLE_ENABLE_GLOBAL_MUTEX_RECURSION=1
+    )
+endif ()
+
 set(ANGLE_DEFINITIONS
     ANGLE_ENABLE_ESSL
     ANGLE_ENABLE_GLSL
@@ -176,6 +189,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
         LIBANGLE_IMPLEMENTATION
     )
     target_compile_definitions(ANGLE PUBLIC ${ANGLE_DEFINITIONS})
+    target_compile_definitions(ANGLE PRIVATE ${ANGLE_THREAD_SAFETY_DEFINITIONS})
     target_link_libraries(ANGLE PRIVATE ZLIB::ZLIB ${CMAKE_DL_LIBS})
     if (ENABLE_WEBGL_WEBGPU)
         # The default proc table of the wgpu backend (DawnNativeWebGPUFramework.cpp) is the one of WebGPU.framework.
@@ -192,6 +206,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
     target_compile_definitions(GLESv2 PRIVATE
         ${_angle_prototypes}
         LIBGLESV2_IMPLEMENTATION
+        ${ANGLE_THREAD_SAFETY_DEFINITIONS}
     )
 
     target_link_libraries(GLESv2 PRIVATE ${ANGLEGLESv2_LIBRARIES} ${CMAKE_DL_LIBS})
@@ -219,6 +234,7 @@ if (USE_ANGLE_EGL OR ENABLE_WEBGL)
             ${ANGLE_DEFINITIONS}
             ${gl_prototypes}
             ${_angle_egl_api_definition}
+            ${ANGLE_THREAD_SAFETY_DEFINITIONS}
         )
 
         target_link_libraries(EGL PRIVATE GLESv2 ${CMAKE_DL_LIBS})

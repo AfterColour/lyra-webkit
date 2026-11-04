@@ -59,6 +59,10 @@
 #include "ImageBufferRemoteIOSurfaceBackend.h"
 #endif
 
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+#include "ImageBufferRemoteAcceleratedBackendWC.h"
+#endif
+
 namespace WebKit {
 
 using namespace WebCore;
@@ -268,6 +272,9 @@ RefPtr<RemoteImageBufferProxy> RemoteRenderingBackendProxy::createImageBuffer(co
     case RenderingMode::Accelerated:
 #if HAVE(IOSURFACE)
         imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteIOSurfaceBackend>(parameters, *this);
+#elif USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+        // Lyra: a Skia GPU surface owned by the GPU process (page tiles, accelerated canvas).
+        imageBuffer = RemoteImageBufferProxy::create<ImageBufferRemoteAcceleratedBackendWC>(parameters, *this);
 #endif
         [[fallthrough]];
 
@@ -354,6 +361,9 @@ static std::unique_ptr<ImageBufferBackend> createBackendForSerializedBuffer(cons
 #if HAVE(IOSURFACE)
         if (!handle)
             return ImageBufferRemoteIOSurfaceBackend::create(parameters);
+#elif USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+        if (!handle)
+            return ImageBufferRemoteAcceleratedBackendWC::create(parameters);
 #endif
         [[fallthrough]];
     case RenderingMode::Unaccelerated:

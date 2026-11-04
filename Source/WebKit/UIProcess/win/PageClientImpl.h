@@ -166,6 +166,22 @@ private:
     DefaultUndoController m_undoController;
 
     WebView& m_view;
+
+#if ENABLE(FULLSCREEN_API)
+    // Element fullscreen (MyBrowser). The embedding application is asked first through the
+    // registered window message "WebKitFullScreen" sent to the view's root window
+    // (wParam: TRUE enter / FALSE exit, lParam: the view's HWND); if it returns nonzero it laid out
+    // the window itself. Otherwise the root window is made a borderless window covering its
+    // monitor with the view on top, and restored afterwards.
+    void enterFullScreenWindow();
+    void exitFullScreenWindow();
+    bool m_isFullScreen { false };
+    bool m_applicationHandlesFullScreen { false };
+    LONG_PTR m_savedRootStyle { 0 };
+    LONG_PTR m_savedRootExStyle { 0 };
+    WINDOWPLACEMENT m_savedRootPlacement { sizeof(WINDOWPLACEMENT) };
+    RECT m_savedViewRect { };
+#endif
 };
 
 } // namespace WebKit

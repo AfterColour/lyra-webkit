@@ -306,38 +306,95 @@ void PageClientImpl::setFullScreenClientForTesting(std::unique_ptr<WebFullScreen
 {
 }
 
+static UINT fullScreenWindowMessage()
+{
+    static UINT message = ::RegisterWindowMessageW(L"WebKitFullScreen");
+    return message;
+}
+
+void PageClientImpl::enterFullScreenWindow()
+{
+    HWND view = m_view.window();
+    HWND root = ::GetAncestor(view, GA_ROOT);
+    if (!root || root == view)
+        return;
+
+    m_applicationHandlesFullScreen = ::SendMessageW(root, fullScreenWindowMessage(), TRUE, reinterpret_cast<LPARAM>(view));
+    if (m_applicationHandlesFullScreen)
+        return;
+
+    m_savedRootStyle = ::GetWindowLongPtrW(root, GWL_STYLE);
+    m_savedRootExStyle = ::GetWindowLongPtrW(root, GWL_EXSTYLE);
+    m_savedRootPlacement.length = sizeof(m_savedRootPlacement);
+    ::GetWindowPlacement(root, &m_savedRootPlacement);
+    ::GetWindowRect(view, &m_savedViewRect);
+    ::MapWindowPoints(nullptr, root, reinterpret_cast<POINT*>(&m_savedViewRect), 2);
+
+    MONITORINFO monitor { sizeof(MONITORINFO) };
+    ::GetMonitorInfoW(::MonitorFromWindow(root, MONITOR_DEFAULTTONEAREST), &monitor);
+    const RECT& screen = monitor.rcMonitor;
+    ::SetWindowLongPtrW(root, GWL_STYLE, (m_savedRootStyle & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+    ::SetWindowLongPtrW(root, GWL_EXSTYLE, m_savedRootExStyle & ~(WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE));
+    ::SetWindowPos(root, HWND_TOP, screen.left, screen.top, screen.right - screen.left, screen.bottom - screen.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+    // After the root window's own layout ran for the new size: the view covers the whole client area.
+    ::SetWindowPos(view, HWND_TOP, 0, 0, screen.right - screen.left, screen.bottom - screen.top, 0);
+}
+
+void PageClientImpl::exitFullScreenWindow()
+{
+    HWND view = m_view.window();
+    HWND root = ::GetAncestor(view, GA_ROOT);
+    if (!root || root == view)
+        return;
+
+    if (m_applicationHandlesFullScreen) {
+        ::SendMessageW(root, fullScreenWindowMessage(), FALSE, reinterpret_cast<LPARAM>(view));
+        return;
+    }
+
+    ::SetWindowLongPtrW(root, GWL_STYLE, m_savedRootStyle);
+    ::SetWindowLongPtrW(root, GWL_EXSTYLE, m_savedRootExStyle);
+    ::SetWindowPlacement(root, &m_savedRootPlacement);
+    ::SetWindowPos(root, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    ::SetWindowPos(view, nullptr, m_savedViewRect.left, m_savedViewRect.top,
+        m_savedViewRect.right - m_savedViewRect.left, m_savedViewRect.bottom - m_savedViewRect.top, SWP_NOZORDER);
+}
+
 void PageClientImpl::closeFullScreenManager()
 {
-    notImplemented();
+    if (std::exchange(m_isFullScreen, false))
+        exitFullScreenWindow();
 }
 
 bool PageClientImpl::isFullScreen()
 {
-    notImplemented();
-    return false;
+    return m_isFullScreen;
 }
 
 void PageClientImpl::enterFullScreen(FloatSize, CompletionHandler<void(bool)>&& completionHandler)
 {
-    notImplemented();
-    completionHandler(false);
+    if (!m_isFullScreen) {
+        m_isFullScreen = true;
+        enterFullScreenWindow();
+    }
+    completionHandler(true);
 }
 
 void PageClientImpl::exitFullScreen(CompletionHandler<void()>&& completionHandler)
 {
-    notImplemented();
+    if (std::exchange(m_isFullScreen, false))
+        exitFullScreenWindow();
     completionHandler();
 }
 
 void PageClientImpl::beganEnterFullScreen(const IntRect& /* initialFrame */, const IntRect& /* finalFrame */, CompletionHandler<void(bool)>&& completionHandler)
 {
-    notImplemented();
+    // No animation: the window already has its fullscreen size.
     completionHandler(true);
 }
 
 void PageClientImpl::beganExitFullScreen(const IntRect& /* initialFrame */, const IntRect& /* finalFrame */, CompletionHandler<void()>&& completionHandler)
 {
-    notImplemented();
     completionHandler();
 }
 #endif // ENABLE(FULLSCREEN_API)

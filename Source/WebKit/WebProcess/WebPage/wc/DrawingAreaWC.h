@@ -92,7 +92,9 @@ private:
     RootLayerInfo* rootLayerInfoWithFrameIdentifier(WebCore::FrameIdentifier);
 
     WebCore::GraphicsLayerClient m_rootLayerClient;
-    const std::unique_ptr<RemoteWCLayerTreeHostProxy> m_remoteWCLayerTreeHostProxy;
+    // Reference counted, not uniquely owned: GPUProcessConnection keeps weak pointers to it as a
+    // client, and those only notice the object is gone if it dies through its last deref.
+    const Ref<RemoteWCLayerTreeHostProxy> m_remoteWCLayerTreeHostProxy;
     WCLayerFactory m_layerFactory;
     DoublyLinkedList<GraphicsLayerWC> m_liveGraphicsLayers;
     WebCore::Timer m_updateRenderingTimer;
@@ -109,6 +111,19 @@ private:
     WebCore::IntRect m_scrollRect;
     WebCore::IntSize m_scrollOffset;
     CompletionHandler<void()> m_forceRepaintCompletionHandler;
+    // MyBrowser: tile buffers are reused once the GPU process has uploaded them (the update reply),
+    // instead of allocating new shared memory for every repainted tile of every frame.
+    // MYBROWSER_DISABLE_TILE_POOL=1 turns this off.
+    Vector<RefPtr<WebCore::ImageBuffer>> takeTileBuffers(WCUpdateInfo&);
+    void recycleTileBuffers(Vector<RefPtr<WebCore::ImageBuffer>>&&);
+    Vector<RefPtr<WebCore::ImageBuffer>> m_freeTileBuffers;
+    // MyBrowser: the GPU process crashed or was restarted; resend the whole layer tree.
+    void resyncAfterGPUProcessLoss();
+    uint64_t m_compositorGeneration { 0 };
+
+#if OS(WINDOWS) && USE(GSTREAMER)
+    double m_traceUpdateStart { -1 };
+#endif
 };
 
 } // namespace WebKit

@@ -25,6 +25,14 @@
 
 #include "config.h"
 #include "RemoteRenderingBackend.h"
+#include <WebCore/MediaTraceWin.h>
+#if PLATFORM(WIN) && USE(GRAPHICS_LAYER_WC)
+#include "RemoteWCLayerTreeHost.h"
+#endif
+#include <cstdlib>
+#if PLATFORM(WIN) && USE(SKIA)
+#include <WebCore/SkiaGLContextWin.h>
+#endif
 
 #if ENABLE(GPU_PROCESS)
 
@@ -65,6 +73,10 @@
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
+
+#if PLATFORM(WIN) && USE(SKIA)
+#include <WebCore/ImageBufferSkiaAcceleratedBackend.h>
+#endif
 #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/SystemTracing.h>
@@ -112,8 +124,34 @@ Ref<RemoteRenderingBackend> RemoteRenderingBackend::create(GPUConnectionToWebPro
     return instance;
 }
 
+#if PLATFORM(WIN) && USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+// MyBrowser: MYBROWSER_SHARED_RASTER_THREAD=1 rasterizes on the compositor's thread, so that all
+// GPU work happens on one thread. Measured slower on MotionMark (138 -> 61: rasterization and
+// compositing no longer overlap), so each web process keeps its own rendering thread by default.
+static bool sharesCompositorThread()
+{
+    static bool shares = [] {
+        const char* value = std::getenv("MYBROWSER_SHARED_RASTER_THREAD");
+        return value && *value == '1';
+    }();
+    return shares;
+}
+
+static Ref<IPC::StreamConnectionWorkQueue> createRenderingWorkQueue()
+{
+    if (sharesCompositorThread())
+        return Ref { remoteGraphicsStreamWorkQueue() };
+    return IPC::StreamConnectionWorkQueue::create("RemoteRenderingBackend work queue"_s);
+}
+#else
+static Ref<IPC::StreamConnectionWorkQueue> createRenderingWorkQueue()
+{
+    return IPC::StreamConnectionWorkQueue::create("RemoteRenderingBackend work queue"_s);
+}
+#endif
+
 RemoteRenderingBackend::RemoteRenderingBackend(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteRenderingBackendIdentifier identifier, Ref<IPC::StreamServerConnection>&& streamConnection)
-    : m_workQueue(IPC::StreamConnectionWorkQueue::create("RemoteRenderingBackend work queue"_s))
+    : m_workQueue(createRenderingWorkQueue())
     , m_streamConnection(WTF::move(streamConnection))
     , m_gpuConnectionToWebProcess(gpuConnectionToWebProcess)
     , m_sharedResourceCache(gpuConnectionToWebProcess.sharedResourceCache())
@@ -136,6 +174,16 @@ void RemoteRenderingBackend::startListeningForIPC()
 
 void RemoteRenderingBackend::stopListeningForIPC()
 {
+#if PLATFORM(WIN) && USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+    if (sharesCompositorThread()) {
+        // The thread is shared and keeps running: just tear down this backend on it (like
+        // RemoteGraphicsContextGL does on the same queue).
+        m_workQueue->dispatch([protectedThis = Ref { *this }] {
+            protectedThis->workQueueUninitialize();
+        });
+        return;
+    }
+#endif
     m_workQueue->stopAndWaitForCompletion([protectedThis = Ref { *this }] {
         protectedThis->workQueueUninitialize();
     });
@@ -166,6 +214,13 @@ void RemoteRenderingBackend::workQueueUninitialize()
     Ref streamConnection = m_streamConnection;
     streamConnection->stopReceivingMessages(Messages::RemoteRenderingBackend::messageReceiverName(), m_renderingBackendIdentifier.toUInt64());
     streamConnection->invalidate();
+#if PLATFORM(WIN) && USE(SKIA)
+    // This queue's thread ends next; release its Skia GL context now, not at thread exit.
+#if USE(GRAPHICS_LAYER_WC)
+    if (!sharesCompositorThread())
+#endif
+        WebCore::releaseSkiaGLContextForCurrentThread();
+#endif
 }
 
 void RemoteRenderingBackend::didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::MessageName messageName, const Vector<uint32_t>&)
@@ -307,6 +362,9 @@ static RefPtr<ImageBuffer> allocateImageBufferInternal(const FloatSize& logicalS
             imageBuffer = ImageBuffer::create<ImageBufferShareableMappedIOSurfaceBitmapBackend, ImageBufferType>(logicalSize, resolutionScale, colorSpace, bufferFormat, purpose, creationContext);
         if (!imageBuffer)
             imageBuffer = ImageBuffer::create<ImageBufferShareableMappedIOSurfaceBackend, ImageBufferType>(logicalSize, resolutionScale, colorSpace, bufferFormat, purpose, creationContext);
+#elif PLATFORM(WIN) && USE(SKIA)
+        // MyBrowser: Skia's GL backend on ANGLE (null when PlatformDisplay has no Skia GL context).
+        imageBuffer = ImageBuffer::create<ImageBufferSkiaAcceleratedBackend, ImageBufferType>(logicalSize, resolutionScale, colorSpace, bufferFormat, purpose, creationContext);
 #endif
         [[fallthrough]];
 
@@ -399,7 +457,11 @@ void RemoteRenderingBackend::createImageBufferWithBackingStore(const FloatSize& 
 {
     assertIsCurrent(workQueue());
 
-    RefPtr<ImageBuffer> imageBuffer = allocateImageBuffer(logicalSize, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat, { }, WTF::move(backingStore));
+    RefPtr<ImageBuffer> imageBuffer;
+    {
+        MEDIA_TRACE_TIME("GPU: allocate ImageBuffer");
+        imageBuffer = allocateImageBuffer(logicalSize, renderingMode, purpose, resolutionScale, colorSpace, pixelFormat, { }, WTF::move(backingStore));
+    }
     if (!imageBuffer) {
         RELEASE_LOG(RemoteLayerBuffers, "[renderingBackend=%" PRIu64 "] RemoteRenderingBackend::createImageBuffer - failed to allocate image buffer %" PRIu64, m_renderingBackendIdentifier.toUInt64(), identifier.toUInt64());
         // On failure to create a remote image buffer we still create a null display list recorder.
@@ -409,8 +471,18 @@ void RemoteRenderingBackend::createImageBufferWithBackingStore(const FloatSize& 
         RELEASE_ASSERT(imageBuffer);
         streamConnection().send(Messages::RemoteImageBufferProxy::DidFailToCreateBackend(), identifier);
     }
+    bool isGPUPaintedTile = renderingMode == RenderingMode::Accelerated && purpose == RenderingPurpose::DOM;
     auto result = m_remoteImageBuffers.add(identifier, RemoteImageBuffer::create(imageBuffer.releaseNonNull(), identifier, contextIdentifier, *this));
     MESSAGE_CHECK(result.isNewEntry, "Duplicate ImageBuffers");
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+    if (isGPUPaintedTile) {
+        if (!result.iterator->value->isAcceleratedForTrace())
+            MEDIA_TRACE("DOM tile %.0fx%.0f: asked for GPU, got CPU", logicalSize.width(), logicalSize.height());
+        result.iterator->value->setPublishesTileForWCScene();
+    }
+#else
+    UNUSED_VARIABLE(isGPUPaintedTile);
+#endif
 }
 
 void RemoteRenderingBackend::releaseImageBuffer(RenderingResourceIdentifier identifier)

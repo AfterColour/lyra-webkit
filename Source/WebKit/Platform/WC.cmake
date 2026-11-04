@@ -9,6 +9,7 @@ list(APPEND WebKit_SOURCES
 
     UIProcess/wc/DrawingAreaProxyWC.cpp
 
+    WebProcess/GPU/graphics/wc/ImageBufferRemoteAcceleratedBackendWC.cpp
     WebProcess/GPU/graphics/wc/RemoteGraphicsContextGLProxyWC.cpp
     WebProcess/GPU/graphics/wc/RemoteWCLayerTreeHostProxy.cpp
 

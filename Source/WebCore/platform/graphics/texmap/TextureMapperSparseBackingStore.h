@@ -47,6 +47,7 @@ public:
     WEBCORE_EXPORT void drawBorder(TextureMapper&, const Color&, float borderWidth, const FloatRect&, const TransformationMatrix&) override;
     WEBCORE_EXPORT void drawRepaintCounter(TextureMapper&, int repaintCount, const Color&, const FloatRect&, const TransformationMatrix&) override;
     WEBCORE_EXPORT void updateContents(const TileIndex&, NativeImage&, const IntRect& dirtyRect);
+    WEBCORE_EXPORT void updateContentsFromTexture(const TileIndex&, unsigned textureID, const IntRect& dirtyRect);
     WEBCORE_EXPORT void removeTile(const TileIndex&);
 
 private:

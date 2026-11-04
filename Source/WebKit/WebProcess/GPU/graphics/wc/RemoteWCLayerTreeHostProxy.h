@@ -50,6 +50,10 @@ public:
 
     void update(WCUpdateInfo&&, CompletionHandler<void(std::optional<WebKit::UpdateInfo>)>&&);
 
+    // MyBrowser: called when the GPU process went away. The next update goes to a new GPU process
+    // whose scene is empty, so the drawing area has to send the whole layer tree again.
+    void setDidLoseGPUProcessHandler(Function<void()>&& handler) { m_didLoseGPUProcess = WTF::move(handler); }
+
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 private:
@@ -68,6 +72,7 @@ private:
     WCLayerTreeHostIdentifier m_wcLayerTreeHostIdentifier { WCLayerTreeHostIdentifier::generate() };
     WeakRef<WebPage> m_page;
     bool m_usesOffscreenRendering { false };
+    Function<void()> m_didLoseGPUProcess;
 };
 
 } // namespace WebKit

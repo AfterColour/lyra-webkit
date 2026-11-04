@@ -46,6 +46,19 @@
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <wtf/StdLibExtras.h>
 
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+#include "GPUConnectionToWebProcess.h"
+#include "WCTileTextureRegistry.h"
+#include <WebCore/MediaTraceWin.h>
+#include <WebCore/NativeImage.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkSurface.h>
+#include <skia/gpu/ganesh/GrBackendSurface.h>
+#include <skia/gpu/ganesh/SkSurfaceGanesh.h>
+#include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
+#endif
+
 #define MESSAGE_CHECK(assertion, message) MESSAGE_CHECK_WITH_MESSAGE_BASE(assertion, m_renderingBackend->streamConnection(), message)
 
 namespace WebKit {
@@ -112,6 +125,10 @@ void RemoteImageBuffer::prepareForDisplay(IPC::Semaphore&& finishedSignal, Compl
 
 RemoteImageBuffer::~RemoteImageBuffer()
 {
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+    if (m_publishedTileForWCScene)
+        WCTileTextureRegistry::singleton().remove(m_renderingBackend->gpuConnectionToWebProcess().webProcessIdentifier(), m_identifier);
+#endif
     m_renderingBackend->sharedResourceCache().didReleaseImageBuffer(m_imageBuffer->renderingPurpose(), m_imageBuffer->renderingMode());
     // Volatile image buffers do not have contexts.
     if (m_imageBuffer->volatilityState() == WebCore::VolatilityState::Volatile)
@@ -214,7 +231,13 @@ void RemoteImageBuffer::flushContext()
 {
     MESSAGE_CHECK(m_flushSignal, "Cannot flush context without a valid flush signal. Use FlushContextSync for synchronous flushing.");
     assertIsCurrent(workQueue());
-    m_imageBuffer->flushDrawingContext();
+    {
+        MEDIA_TRACE_TIME("GPU: ImageBuffer flush");
+        m_imageBuffer->flushDrawingContext();
+    }
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+    publishTileForWCScene();
+#endif
     m_flushSignal->signal();
 }
 
@@ -222,8 +245,39 @@ void RemoteImageBuffer::flushContextSync(CompletionHandler<void()>&& completionH
 {
     assertIsCurrent(workQueue());
     m_imageBuffer->flushDrawingContext();
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+    publishTileForWCScene();
+#endif
     completionHandler();
 }
+
+#if USE(GRAPHICS_LAYER_WC) && USE(SKIA)
+void RemoteImageBuffer::publishTileForWCScene()
+{
+    if (!m_publishesTileForWCScene)
+        return;
+
+    WCTileTextureRegistry::Entry entry;
+    if (m_imageBuffer->renderingMode() == WebCore::RenderingMode::Accelerated) {
+        // flushDrawingContext() submitted the GL commands; the compositor's context is in the same
+        // share group and on the same ANGLE device, so it sees them.
+        if (auto* surface = m_imageBuffer->surface()) {
+            auto texture = SkSurfaces::GetBackendTexture(surface, SkSurfaces::BackendHandleAccess::kFlushRead);
+            GrGLTextureInfo info;
+            if (texture.isValid() && GrBackendTextures::GetGLTextureInfo(texture, &info))
+                entry.textureID = info.fID;
+        }
+    }
+    if (!entry.textureID) {
+        // Not accelerated after all (no Skia GL context, too many buffers): hand over the pixels.
+        entry.image = m_imageBuffer->copyNativeImage();
+    }
+    if (!entry.textureID)
+        MEDIA_TRACE("tile %llu published as a pixel copy (no GPU texture)", static_cast<unsigned long long>(m_identifier.toUInt64()));
+    WCTileTextureRegistry::singleton().set(m_renderingBackend->gpuConnectionToWebProcess().webProcessIdentifier(), m_identifier, WTF::move(entry));
+    m_publishedTileForWCScene = true;
+}
+#endif
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
 void RemoteImageBuffer::dynamicContentScalingDisplayList(CompletionHandler<void(std::optional<WebCore::DynamicContentScalingDisplayList>&&)>&& completionHandler)

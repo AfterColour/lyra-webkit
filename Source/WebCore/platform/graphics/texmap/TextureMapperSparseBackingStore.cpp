@@ -33,6 +33,10 @@
 #include "IntRect.h"
 #include "TextureMapper.h"
 
+#if PLATFORM(WIN)
+#include "MediaTraceWin.h"
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextureMapperSparseBackingStore);
@@ -72,12 +76,41 @@ void TextureMapperSparseBackingStore::drawRepaintCounter(TextureMapper& textureM
         textureMapper.drawNumber(repaintCount, borderColor, iterator.value->rect().location(), adjustedTransform);
 }
 
-void TextureMapperSparseBackingStore::updateContents(const TileIndex& index, NativeImage& image, const IntRect& dirtyRect)
+// A tile is created with the rect of its first update, which the web process sends in full.
+// If an update covers more than that (the tile was created from a partial repaint), start the
+// tile over at the larger rect rather than writing outside its texture.
+static TextureMapperTile& ensureTileForUpdate(HashMap<TextureMapperSparseBackingStore::TileIndex, std::unique_ptr<TextureMapperTile>>& tiles, const TextureMapperSparseBackingStore::TileIndex& index, const IntRect& dirtyRect)
 {
-    auto addResult = m_tiles.ensure(index, [&]() {
+    auto addResult = tiles.ensure(index, [&]() {
         return makeUnique<TextureMapperTile>(dirtyRect);
     });
-    addResult.iterator->value->updateContents(image, dirtyRect);
+    auto& tile = addResult.iterator->value;
+    if (!addResult.isNewEntry) {
+        IntRect tileRect = enclosingIntRect(tile->rect());
+        if (!tileRect.contains(dirtyRect) && dirtyRect.contains(tileRect)) {
+#if PLATFORM(WIN)
+            MEDIA_TRACE("tile %d,%d %dx%d grown to %d,%d %dx%d", tileRect.x(), tileRect.y(), tileRect.width(), tileRect.height(),
+                dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
+#endif
+            tile = makeUnique<TextureMapperTile>(dirtyRect);
+        } else if (!tileRect.contains(dirtyRect)) {
+#if PLATFORM(WIN)
+            MEDIA_TRACE("tile %d,%d %dx%d does not contain update %d,%d %dx%d", tileRect.x(), tileRect.y(), tileRect.width(), tileRect.height(),
+                dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
+#endif
+        }
+    }
+    return *tile;
+}
+
+void TextureMapperSparseBackingStore::updateContents(const TileIndex& index, NativeImage& image, const IntRect& dirtyRect)
+{
+    ensureTileForUpdate(m_tiles, index, dirtyRect).updateContents(image, dirtyRect);
+}
+
+void TextureMapperSparseBackingStore::updateContentsFromTexture(const TileIndex& index, unsigned textureID, const IntRect& dirtyRect)
+{
+    ensureTileForUpdate(m_tiles, index, dirtyRect).updateContentsFromTexture(textureID, dirtyRect);
 }
 
 void TextureMapperSparseBackingStore::removeTile(const TileIndex& index)

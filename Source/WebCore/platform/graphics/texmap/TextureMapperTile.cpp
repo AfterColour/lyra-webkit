@@ -19,6 +19,10 @@
 #include "config.h"
 #include "TextureMapperTile.h"
 
+#if PLATFORM(WIN)
+#include "MediaTraceWin.h"
+#endif
+
 #include "BitmapTexture.h"
 #include "NativeImage.h"
 #include "TextureMapper.h"
@@ -68,6 +72,31 @@ void TextureMapperTile::updateContents(NativeImage& image, const IntRect& dirtyR
     }
 
     m_texture->updateContents(&image, targetRect, sourceOffset);
+}
+
+void TextureMapperTile::updateContentsFromTexture(unsigned textureID, const IntRect& dirtyRect)
+{
+    IntRect targetRect = enclosingIntRect(m_rect);
+    targetRect.intersect(dirtyRect);
+    if (targetRect.isEmpty())
+        return;
+    IntPoint sourceOffset = targetRect.location();
+    sourceOffset.move(-dirtyRect.x(), -dirtyRect.y());
+    targetRect.move(-m_rect.x(), -m_rect.y());
+    if (!m_texture)
+        m_texture = BitmapTexture::create(targetRect.size(), { BitmapTexture::Flags::SupportsAlpha });
+    // copyFromExternalTexture() requires the copy to fit the texture on both sides.
+    auto textureSize = m_texture->size();
+    if (targetRect.maxX() > textureSize.width() || targetRect.maxY() > textureSize.height()
+        || sourceOffset.x() + targetRect.width() > textureSize.width() || sourceOffset.y() + targetRect.height() > textureSize.height()) {
+#if PLATFORM(WIN)
+        MEDIA_TRACE("tile copy skipped: tile %d,%d %dx%d texture %dx%d dirty %d,%d %dx%d",
+            static_cast<int>(m_rect.x()), static_cast<int>(m_rect.y()), static_cast<int>(m_rect.width()), static_cast<int>(m_rect.height()),
+            textureSize.width(), textureSize.height(), dirtyRect.x(), dirtyRect.y(), dirtyRect.width(), dirtyRect.height());
+#endif
+        return;
+    }
+    m_texture->copyFromExternalTexture(textureID, targetRect, IntSize(sourceOffset.x(), sourceOffset.y()));
 }
 
 void TextureMapperTile::updateContents(GraphicsLayer* sourceLayer, const IntRect& dirtyRect, float scale)

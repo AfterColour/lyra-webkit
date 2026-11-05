@@ -590,6 +590,11 @@ void GraphicsLayerWC::flushCompositingState(const FloatRect& passedVisibleRect)
     // passedVisibleRect doesn't contain the scrollbar area. Inflate it.
     FloatRect visibleRect = passedVisibleRect;
     visibleRect.inflate(20.f);
+    // Lyra: paint ahead of the viewport (a screen above and below, a quarter to the sides), so that
+    // scrolling mostly moves tiles that are already painted instead of painting new rows of tiles
+    // in every frame.
+    visibleRect.inflateX(std::max(20.f, passedVisibleRect.width() * 0.25f));
+    visibleRect.inflateY(std::max(20.f, passedVisibleRect.height()));
     TransformState state(TransformState::UnapplyInverseTransformDirection, FloatQuad(visibleRect), FloatQuad { visibleRect });
     recursiveCommitChanges(state);
 }

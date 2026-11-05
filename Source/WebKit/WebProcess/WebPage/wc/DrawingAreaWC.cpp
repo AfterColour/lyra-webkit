@@ -43,7 +43,11 @@
 #include "WebProcess.h"
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/MediaTraceWin.h>
+#include <cmath>
 #include <cstdlib>
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
 #include <WebCore/LocalFrame.h>
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
@@ -151,6 +155,19 @@ void DrawingAreaWC::updatePreferences(const WebPreferencesStore& store)
     settings.setForceCompositingMode(store.getBoolValueForKey(WebPreferencesKey::siteIsolationEnabledKey())
         || store.getBoolValueForKey(WebPreferencesKey::forceCompositingModeKey())
         || (settings.acceleratedCompositingEnabled() && gpuPaintedTiles()));
+
+#if OS(WINDOWS)
+    // Lyra: the UI process never reports the display's refresh rate on Windows, so pages assumed
+    // 60 Hz (requestAnimationFrame, animations, smooth scrolling). Tell the page the real one; the
+    // display refresh monitor ticks at the display's vblank (DisplayRefreshMonitorWin).
+    DEVMODEW mode { };
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1) {
+        Ref page = *m_webPage->corePage();
+        if (page->displayNominalFramesPerSecond() != std::optional<WebCore::FramesPerSecond> { mode.dmDisplayFrequency })
+            Ref { m_webPage.get() }->windowScreenDidChange(page->displayID(), mode.dmDisplayFrequency);
+    }
+#endif
 }
 
 bool DrawingAreaWC::shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView& frameView) const
@@ -513,8 +530,9 @@ Vector<RefPtr<ImageBuffer>> DrawingAreaWC::takeTileBuffers(WCUpdateInfo& updateI
 
 void DrawingAreaWC::recycleTileBuffers(Vector<RefPtr<ImageBuffer>>&& buffers)
 {
-    // Keep at most ~64 MB of idle tile memory; the oldest buffers go first.
-    constexpr double maximumPooledBytes = 64 * 1024 * 1024;
+    // Keep at most ~192 MB of idle tile memory; the oldest buffers go first. (The painted area
+    // reaches a screen above and below the viewport, so more tiles are in use at a time.)
+    constexpr double maximumPooledBytes = 192 * 1024 * 1024;
     for (auto& buffer : buffers) {
         if (buffer)
             m_freeTileBuffers.append(WTF::move(buffer));
@@ -534,6 +552,12 @@ void DrawingAreaWC::recycleTileBuffers(Vector<RefPtr<ImageBuffer>>&& buffers)
 RefPtr<ImageBuffer> DrawingAreaWC::createImageBuffer(FloatSize size, float deviceScaleFactor)
 {
     if (tilePoolEnabled()) {
+        // Lyra: repainted rects come in all sizes; round the buffer up to 128-pixel steps so that a
+        // pooled buffer fits most repaints. Only the repainted rect (top-left) is copied out of it.
+        // Allocating a GPU surface costs up to ~90 ms when the driver has to find memory.
+        auto roundUp = [](float value) { return std::min(512.f, std::ceil(value / 128.f) * 128.f); };
+        if (size.width() <= 512 && size.height() <= 512)
+            size = { std::max(size.width(), roundUp(size.width())), std::max(size.height(), roundUp(size.height())) };
         for (size_t i = 0; i < m_freeTileBuffers.size(); ++i) {
             auto& candidate = m_freeTileBuffers[i];
             if (candidate->logicalSize() != size || candidate->resolutionScale() != deviceScaleFactor)

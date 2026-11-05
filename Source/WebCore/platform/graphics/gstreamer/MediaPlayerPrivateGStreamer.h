@@ -470,6 +470,13 @@ protected:
     void fallBackToSoftwareVideoPainting();
     RefPtr<AcceleratedVideoLayerWin> m_d3d11VideoLayer;
     std::atomic<bool> m_d3d11VideoLayerFailed { false };
+    // Lyra: d3d11convert scales the frames to their size on screen (in device pixels), with the
+    // GPU's video processor, instead of the compositor stretching them bilinearly.
+    void updateD3D11VideoScaling();
+    void decoderOutputCapsChanged(GstPad*);
+    GRefPtr<GstElement> m_d3d11ScaleCapsfilter;
+    GRefPtr<GstPad> m_d3d11ConvertSinkPad;
+    IntSize m_d3d11ScaleTarget;
 #endif
     bool m_canRenderingBeAccelerated { false };
 

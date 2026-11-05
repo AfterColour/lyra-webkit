@@ -261,6 +261,10 @@ void MediaPlayerPrivateGStreamer::tearDown(bool clearMediaPlayer)
 
     if (m_videoSink)
         g_signal_handlers_disconnect_matched(m_videoSink.get(), G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, this);
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    if (m_d3d11ConvertSinkPad)
+        g_signal_handlers_disconnect_matched(m_d3d11ConvertSinkPad.get(), G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, this);
+#endif
 
     // This will release the GStreamer thread from m_drawCondition in non AC mode in case there's an ongoing triggerRepaint call
     // waiting there, and ensure that any triggerRepaint call reaching the lock won't wait on m_drawCondition.
@@ -3832,10 +3836,24 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
             const char* description = "d3d11convert ! capsfilter caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\" ! d3d11download";
 #if USE(GRAPHICS_LAYER_WC)
             if (m_d3d11VideoLayer)
-                description = "d3d11convert ! capsfilter caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\"";
+                description = "d3d11convert name=lyraconvert ! capsfilter name=lyrascale caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\"";
 #endif
             GstElement* filter = gst_parse_bin_from_description(description, TRUE, &error.outPtr());
             if (filter) {
+#if USE(GRAPHICS_LAYER_WC)
+                if (m_d3d11VideoLayer) {
+                    m_d3d11ScaleCapsfilter = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyrascale"));
+                    // The page must keep seeing the video's own size: take it from the decoder
+                    // output (d3d11convert's input), not from the scaled frames the sink gets.
+                    if (GRefPtr convert = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyraconvert"))) {
+                        GRefPtr pad = adoptGRef(gst_element_get_static_pad(convert.get(), "sink"));
+                        m_d3d11ConvertSinkPad = pad;
+                        g_signal_connect(pad.get(), "notify::caps", G_CALLBACK(+[](GstPad* pad, GParamSpec*, MediaPlayerPrivateGStreamer* player) {
+                            player->decoderOutputCapsChanged(pad);
+                        }), this);
+                    }
+                }
+#endif
                 g_object_set(m_pipeline.get(), "video-filter", filter, nullptr);
                 MEDIA_TRACE("video-filter: %s", description);
             } else
@@ -4153,6 +4171,14 @@ bool MediaPlayerPrivateGStreamer::updateVideoSizeAndOrientationFromStream(GstStr
     ASSERT(!m_isLegacyPlaybin);
     GRefPtr caps = adoptGRef(gst_stream_get_caps(stream));
     GRefPtr tags = adoptGRef(gst_stream_get_tags(stream));
+
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    // The sink gets frames scaled to their size on screen; the video's size is d3d11convert's input.
+    if (m_d3d11ConvertSinkPad) {
+        if (GRefPtr decoderCaps = adoptGRef(gst_pad_get_current_caps(m_d3d11ConvertSinkPad.get())))
+            caps = WTF::move(decoderCaps);
+    }
+#endif
 
     return updateVideoSizeAndOrientationFromCapsAndTags(caps, tags);
 }
@@ -4555,7 +4581,61 @@ void MediaPlayerPrivateGStreamer::managePlayerSuspend()
 void MediaPlayerPrivateGStreamer::setPresentationSize(const IntSize& size)
 {
     m_size = size;
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    updateD3D11VideoScaling();
+#endif
 }
+
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+void MediaPlayerPrivateGStreamer::decoderOutputCapsChanged(GstPad* pad)
+{
+    // Streaming thread. The video's own size changes with adaptive streaming (720p -> 1080p...)
+    // while the scaled output can stay the same size, so the sink's caps would not tell.
+    GRefPtr<GstCaps> caps = adoptGRef(gst_pad_get_current_caps(pad));
+    if (!caps)
+        return;
+    RunLoop::mainSingleton().dispatch([weakThis = ThreadSafeWeakPtr { *this }, caps = WTF::move(caps)] {
+        RefPtr self = weakThis.get();
+        if (!self)
+            return;
+        self->updateVideoSizeAndOrientationFromCaps(caps.get());
+        self->updateD3D11VideoScaling();
+    });
+}
+
+void MediaPlayerPrivateGStreamer::updateD3D11VideoScaling()
+{
+    ASSERT(isMainThread());
+    if (!m_d3d11ScaleCapsfilter || !isUsingD3D11VideoLayer())
+        return;
+    RefPtr player = m_player.get();
+    if (!player || m_size.isEmpty() || m_videoSize.isEmpty())
+        return;
+
+    // The video is fitted into its box keeping its aspect ratio (object-fit: contain, the
+    // default), then drawn at the device scale.
+    float scale = player->playerContentsScale();
+    float fit = std::min(m_size.width() / m_videoSize.width(), m_size.height() / m_videoSize.height());
+    IntSize target { static_cast<int>(std::lround(m_videoSize.width() * fit * scale)), static_cast<int>(std::lround(m_videoSize.height() * fit * scale)) };
+    // Never more pixels than a 4K frame, and even sizes for the video processor.
+    float limit = std::min(1.f, std::min(3840.f / std::max(target.width(), 1), 3840.f / std::max(target.height(), 1)));
+    target = IntSize { static_cast<int>(target.width() * limit) & ~1, static_cast<int>(target.height() * limit) & ~1 };
+    if (target.width() < 16 || target.height() < 16)
+        return;
+    // Ignore jitter of a few pixels (layout rounding, animations) to avoid needless renegotiation.
+    if (!m_d3d11ScaleTarget.isEmpty() && std::abs(target.width() - m_d3d11ScaleTarget.width()) <= 2 && std::abs(target.height() - m_d3d11ScaleTarget.height()) <= 2)
+        return;
+    m_d3d11ScaleTarget = target;
+
+    GRefPtr<GstCaps> caps = adoptGRef(gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "BGRA",
+        "width", G_TYPE_INT, target.width(), "height", G_TYPE_INT, target.height(),
+        "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, nullptr));
+    gst_caps_set_features(caps.get(), 0, gst_caps_features_new("memory:D3D11Memory", nullptr));
+    g_object_set(m_d3d11ScaleCapsfilter.get(), "caps", caps.get(), nullptr);
+    MEDIA_TRACE("frames scaled on the GPU to %dx%d (video %.0fx%.0f in a %dx%d box, scale %.2f)", target.width(), target.height(),
+        m_videoSize.width(), m_videoSize.height(), m_size.width(), m_size.height(), scale);
+}
+#endif
 
 void MediaPlayerPrivateGStreamer::paint(GraphicsContext& context, const FloatRect& rect)
 {

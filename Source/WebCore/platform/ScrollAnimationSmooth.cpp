@@ -43,8 +43,25 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ScrollAnimationSmooth);
 
+#if PLATFORM(WIN)
+// Lyra: mouse-wheel scrolling with inertia, close to Chromium's: every notch starts moving at once
+// and glides out over ~0.25-0.45 s (a strong ease-out), instead of a 0.1 s ease-in-out step.
+static const float animationSpeed { 650.0f };
+static const Seconds minAnimationDuration { 200_ms };
+static const Seconds maxAnimationDuration { 420_ms };
+// An ease-out whose initial speed is `startSpeedRatio` times the average speed of the animation.
+// The first notch starts steeply; later notches start at the speed the scroll already has, so a
+// series of notches is one continuous glide instead of a burst per notch.
+static Ref<CubicBezierTimingFunction> scrollTimingFunction(double startSpeedRatio = 7)
+{
+    constexpr double x1 = 0.1;
+    double y1 = std::clamp(startSpeedRatio * x1, 0.05, 1.0);
+    return CubicBezierTimingFunction::create(x1, y1, 0.2, 1.0);
+}
+#else
 static const float animationSpeed { 1000.0f };
 static const Seconds maxAnimationDuration { 200_ms };
+#endif
 
 // The end of the spring is imperceptible, so finish once the remaining distance is a fraction of a pixel.
 static constexpr float springAnimationCompletionDistance { 0.25 };
@@ -72,7 +89,11 @@ bool ScrollAnimationSmooth::startAnimatedScrollToDestination(const FloatPoint& f
     if (!m_duration)
         return false;
 
+#if PLATFORM(WIN)
+    m_timingFunction = scrollTimingFunction();
+#else
     downcast<CubicBezierTimingFunction>(*m_timingFunction).setTimingFunctionPreset(CubicBezierTimingFunction::TimingFunctionPreset::EaseInOut);
+#endif
 
     if (!isActive())
         didStart(MonotonicTime::now());
@@ -91,14 +112,38 @@ bool ScrollAnimationSmooth::retargetActiveAnimation(const FloatPoint& newOffset,
         return false;
 
     auto extents = m_client.scrollExtentsForAnimation(*this);
+#if PLATFORM(WIN)
+    // Current speed along the scroll (px/s), from the running curve, to continue from it.
+    double currentSpeed = 0;
+    if (m_duration > 0_s) {
+        auto now = MonotonicTime::now();
+        double fraction = std::clamp((now - m_startTime) / m_duration, 0.0, 1.0);
+        constexpr double step = 0.01;
+        Ref timing = *m_timingFunction;
+        double progressNow = timing->transformProgress(fraction, m_duration.value());
+        double progressNext = timing->transformProgress(std::min(1.0, fraction + step), m_duration.value());
+        double distance = euclidianDistance(m_destinationOffset - m_startOffset);
+        currentSpeed = (progressNext - progressNow) / step * distance / m_duration.value();
+    }
+#endif
 
     m_curve = curve;
     m_startTime = MonotonicTime::now();
     m_startOffset = m_currentOffset;
     m_destinationOffset = newOffset.constrainedBetween(extents.minimumScrollOffset(), extents.maximumScrollOffset());
     m_duration = durationFromDistance(m_destinationOffset - m_startOffset);
+#if PLATFORM(WIN)
+    {
+        double distance = euclidianDistance(m_destinationOffset - m_startOffset);
+        double averageSpeed = m_duration > 0_s ? distance / m_duration.value() : 0;
+        // Never slower than the scroll already is, and a little push for the new notch.
+        double ratio = averageSpeed > 0 ? std::max(currentSpeed / averageSpeed, 2.0) : 7.0;
+        m_timingFunction = scrollTimingFunction(ratio);
+    }
+#else
     downcast<CubicBezierTimingFunction>(*m_timingFunction).setTimingFunctionPreset(CubicBezierTimingFunction::TimingFunctionPreset::EaseOut);
     m_timingFunction = CubicBezierTimingFunction::create(CubicBezierTimingFunction::TimingFunctionPreset::EaseOut);
+#endif
 
     if (m_currentOffset == m_destinationOffset || !m_duration)
         return false;
@@ -118,7 +163,13 @@ Seconds ScrollAnimationSmooth::durationFromDistance(const FloatSize& delta) cons
     float distance = euclidianDistance(delta);
     if (m_curve == ScrollAnimationCurve::Spring)
         return distance ? DocumentEdgeScrollSpring::duration : 0_s;
+#if PLATFORM(WIN)
+    if (!distance)
+        return 0_s;
+    return std::clamp(Seconds(distance / animationSpeed), minAnimationDuration, maxAnimationDuration);
+#else
     return std::min(Seconds(distance / animationSpeed), maxAnimationDuration);
+#endif
 }
 
 double ScrollAnimationSmooth::springProgress(Seconds elapsedTime)

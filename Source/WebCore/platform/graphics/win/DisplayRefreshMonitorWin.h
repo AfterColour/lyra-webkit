@@ -22,7 +22,6 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #pragma once
 
 #include "DisplayRefreshMonitor.h"
@@ -31,20 +30,27 @@
 
 namespace WebCore {
 
+// Lyra: driven by the display's vertical blank (IDXGIOutput::WaitForVBlank on a thread) at the display's own refresh
+// rate, instead of a 16 ms main-thread timer that capped every page at ~60 fps (and drifted
+// against the real vsync).
 class DisplayRefreshMonitorWin : public DisplayRefreshMonitor, public CanMakeWeakPtr<DisplayRefreshMonitorWin> {
 public:
     static RefPtr<DisplayRefreshMonitorWin> create(PlatformDisplayID);
+    ~DisplayRefreshMonitorWin();
 
 private:
     explicit DisplayRefreshMonitorWin(PlatformDisplayID);
 
     bool startNotificationMechanism() final;
     void stopNotificationMechanism() final;
-    
+    std::optional<FramesPerSecond> displayNominalFramesPerSecond() final { return m_framesPerSecond; }
+
     void displayLinkCallbackFired();
 
-    RunLoop::Timer m_timer;
+    class VSyncThread;
+    FramesPerSecond m_framesPerSecond;
     DisplayUpdate m_currentUpdate;
+    RefPtr<VSyncThread> m_vsyncThread;
 };
 
 } // namespace WebCore

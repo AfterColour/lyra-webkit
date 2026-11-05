@@ -460,6 +460,9 @@ WebWheelEventInit WebEventFactory::createWebWheelEvent(HWND hWnd, UINT message, 
     float wheelTicksX = 0;
     float wheelTicksY = 0;
 
+    // Lyra: a mouse-wheel notch scrolls a quarter further than WebKit's default (3 lines x 40 px),
+    // which felt timid next to the animated, gliding scroll.
+    constexpr float wheelDistanceScale = 1.25f;
     float delta = GET_WHEEL_DELTA_WPARAM(wParam) / static_cast<float>(WHEEL_DELTA);
     bool isMouseHWheel = (message == WM_MOUSEHWHEEL);
     if (isMouseHWheel) {
@@ -471,7 +474,7 @@ WebWheelEventInit WebEventFactory::createWebWheelEvent(HWND hWnd, UINT message, 
         wheelTicksY = delta;
     }
     if (isMouseHWheel || (modifiers & WebEventModifier::ShiftKey)) {
-        deltaX = delta * static_cast<float>(horizontalScrollChars()) * WebCore::cScrollbarPixelsPerLine;
+        deltaX = delta * static_cast<float>(horizontalScrollChars()) * WebCore::cScrollbarPixelsPerLine * wheelDistanceScale;
         deltaY = 0;
         granularity = WebWheelEvent::Granularity::ScrollByPixelWheelEvent;
     } else {
@@ -482,7 +485,7 @@ WebWheelEventInit WebEventFactory::createWebWheelEvent(HWND hWnd, UINT message, 
             granularity = WebWheelEvent::Granularity::ScrollByPageWheelEvent;
         else {
             granularity = WebWheelEvent::Granularity::ScrollByPixelWheelEvent;
-            deltaY *= static_cast<float>(verticalMultiplier) * WebCore::cScrollbarPixelsPerLine;
+            deltaY *= static_cast<float>(verticalMultiplier) * WebCore::cScrollbarPixelsPerLine * wheelDistanceScale;
         }
     }
 

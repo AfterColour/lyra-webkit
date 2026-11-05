@@ -44,6 +44,8 @@
 #include <fnmatch.h>
 #endif
 #include <mutex>
+#include <array>
+#include <wtf/Threading.h>
 #include <wtf/FileSystem.h>
 #include <wtf/HashMap.h>
 #include <wtf/MainThread.h>
@@ -527,6 +529,26 @@ bool ensureGStreamerInitialized()
 #endif
 
         registerAppsinkWithWorkaroundsIfNeeded();
+
+#if OS(WINDOWS)
+        // Lyra: pages query media support (canPlayType, isTypeSupported) well before they create a
+        // player. Load the plugins a player needs on a background thread now: loading the d3d11
+        // plugin alone takes ~0.7 s on the main thread (it creates a D3D11 device per adapter to
+        // probe the hardware decoders), which froze the page when the first video started.
+        if (isGStreamerInitialized) {
+            Thread::create("GStreamer plugin warm-up"_s, [] {
+                static constexpr std::array plugins {
+                    "coreelements", "typefindfunctions", "playback", "app", "d3d11", "videoconvertscale",
+                    "isomp4", "matroska", "videoparsersbad", "audioparsers", "libav", "opus", "dav1d", "vpx",
+                    "audioconvert", "audioresample", "volume", "wasapi2",
+                };
+                for (const char* name : plugins) {
+                    if (GstPlugin* plugin = gst_plugin_load_by_name(name))
+                        gst_object_unref(plugin);
+                }
+            })->detach();
+        }
+#endif
 #endif
     });
     return isGStreamerInitialized;

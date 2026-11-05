@@ -465,7 +465,9 @@ bool ScrollingEffectsController::handleWheelEvent(const PlatformWheelEvent& whee
     if (!deltaX && !deltaY)
         return false;
 
-#if ENABLE(SMOOTH_SCROLLING)
+// Lyra: animated mouse-wheel scrolling on Windows too (ScrollAnimatorEnabled), without turning on
+// ENABLE_SMOOTH_SCROLLING for the whole port (this is its only use in the engine).
+#if ENABLE(SMOOTH_SCROLLING) || PLATFORM(WIN)
     if (m_client.scrollAnimationEnabled() && !m_inScrollGesture) {
         if (!retargetAnimatedScrollBy({ deltaX, deltaY }))
             startAnimatedScrollToDestination(scrollOffset, scrollOffset + FloatSize { deltaX, deltaY });

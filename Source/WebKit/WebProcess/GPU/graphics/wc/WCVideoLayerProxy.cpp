@@ -149,14 +149,22 @@ bool WCVideoLayerProxy::pushFrame(ID3D11Texture2D* source, unsigned subresource,
         return false;
     }
 
+    // Key 0: the GPU process is not showing this texture (a slot queued for presentation was
+    // released with key 1 and cannot be taken). Never wait here (GStreamer streaming thread): take
+    // the next free slot in order, and drop the frame only if all of them are busy.
     unsigned slotIndex = m_nextSlot;
-    auto& slot = m_slots[slotIndex];
-    // Key 0: the GPU process is not showing this texture. Never wait here (GStreamer streaming thread).
-    HRESULT hr = slot.mutex->AcquireSync(0, 0);
+    HRESULT hr = E_FAIL;
+    for (unsigned attempt = 0; attempt < textureCount; ++attempt) {
+        slotIndex = (m_nextSlot + attempt) % textureCount;
+        hr = m_slots[slotIndex].mutex->AcquireSync(0, 0);
+        if (hr == S_OK)
+            break;
+    }
     if (hr != S_OK) {
-        MEDIA_TRACE("slot %u still in use (0x%08lx), frame dropped", slotIndex, static_cast<unsigned long>(hr));
+        MEDIA_TRACE("all %u slots in use (0x%08lx), frame dropped", textureCount, static_cast<unsigned long>(hr));
         return true;
     }
+    auto& slot = m_slots[slotIndex];
 
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
     device->GetImmediateContext(&context);

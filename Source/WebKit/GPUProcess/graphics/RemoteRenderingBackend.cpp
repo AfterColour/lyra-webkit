@@ -125,14 +125,17 @@ Ref<RemoteRenderingBackend> RemoteRenderingBackend::create(GPUConnectionToWebPro
 }
 
 #if PLATFORM(WIN) && USE(GRAPHICS_LAYER_WC) && USE(SKIA)
-// MyBrowser: MYBROWSER_SHARED_RASTER_THREAD=1 rasterizes on the compositor's thread, so that all
-// GPU work happens on one thread. Measured slower on MotionMark (138 -> 61: rasterization and
-// compositing no longer overlap), so each web process keeps its own rendering thread by default.
+// MyBrowser: rasterize on the compositor's thread, so that all GPU work happens on one thread, as
+// in Chromium's GPU process. ANGLE's D3D11 backend keeps one state cache for all contexts of a
+// display; with GL calls from several threads it kept crashing on stale program/vertex array
+// pointers despite the share-context lock. One thread costs ~8% on MotionMark (1578 -> 1451) and
+// removed the crashes. MYBROWSER_SEPARATE_RASTER_THREADS=1 gives each web process its own
+// rendering thread again.
 static bool sharesCompositorThread()
 {
     static bool shares = [] {
-        const char* value = std::getenv("MYBROWSER_SHARED_RASTER_THREAD");
-        return value && *value == '1';
+        const char* value = std::getenv("MYBROWSER_SEPARATE_RASTER_THREADS");
+        return !(value && *value == '1');
     }();
     return shares;
 }

@@ -72,7 +72,9 @@ private:
     void didPresent(std::optional<WCContentBufferIdentifier>, bool succeeded);
     void notifyFailure(); // Any thread.
 
-    static constexpr unsigned textureCount = 3;
+    // One shown by the GPU process, the rest queued or free: with the GPU process thread also
+    // rasterizing pages, a few presents can be in flight at once.
+    static constexpr unsigned textureCount = 4;
 
     const uint64_t m_identifier;
     const Ref<IPC::Connection> m_connection;

@@ -238,7 +238,14 @@ void StreamConnectionWorkQueue::startProcessingThread()
 
 void StreamConnectionWorkQueue::processStreams()
 {
+#if OS(WINDOWS)
+    // MyBrowser: the WebGL/compositor queue also rasterizes every page on Windows. Take fewer
+    // messages from a connection at a time, so that compositor work queued with dispatch() (scene
+    // updates, video frames) gets its turn between batches of drawing commands.
+    static thread_local size_t defaultMessageLimit = std::strstr(m_name.characters(), "RemoteGraphicsContextGL") ? 64 : 1000;
+#else
     constexpr size_t defaultMessageLimit = 1000;
+#endif
 #if OS(WINDOWS) && USE(GSTREAMER)
     // MyBrowser: how long each wake-up of a GPU thread keeps it busy (rate x avg = busy ms/s).
     static thread_local const char* busyTraceName = std::strstr(m_name.characters(), "RemoteRenderingBackend")

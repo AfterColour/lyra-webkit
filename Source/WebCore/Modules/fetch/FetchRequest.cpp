@@ -322,6 +322,9 @@ ExceptionOr<void> FetchRequest::setBody(FetchRequest& request)
             return Exception { ExceptionCode::TypeError, makeString("Request has method '"_s, m_request.httpMethod(), "' and cannot have a body"_s) };
 
         auto* globalObject = context ? downcast<JSDOMGlobalObject>(context->globalObject()) : nullptr;
+        // A document without a window (a frame that was just removed) has no global object.
+        if (!globalObject)
+            return Exception { ExceptionCode::InvalidStateError, "Request has no script execution context"_s };
         m_body = request.m_body->createProxy(*globalObject);
         request.setDisturbed();
     }

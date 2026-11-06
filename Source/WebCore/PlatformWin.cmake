@@ -44,6 +44,15 @@ if (USE_GSTREAMER)
     )
 endif ()
 
+if (ENABLE_WEB_AUDIO)
+    # Lyra: Web Audio resources (HRTF impulse responses) as files in WebKit.resources\audio.
+    list(APPEND WebCore_SOURCES
+        platform/audio/win/AudioBusWin.cpp
+    )
+    file(COPY "${WEBCORE_DIR}/platform/audio/resources/Composite.wav"
+        DESTINATION "${CMAKE_BINARY_DIR}/bin/WebKit.resources/audio")
+endif ()
+
 if (ENABLE_ASYNC_SCROLLING)
     # Lyra: threaded scrolling for the WC compositor.
     list(APPEND WebCore_SOURCES

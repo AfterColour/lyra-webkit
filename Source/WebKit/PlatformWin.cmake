@@ -8,6 +8,10 @@ include(Platform/Curl.cmake)
 include(Platform/WC.cmake)
 
 list(APPEND WebKit_SOURCES
+    # Lyra: Web Audio output through the GPU process, and the content blocker store (as on GTK).
+    GPUProcess/media/RemoteAudioDestinationManager.cpp
+    UIProcess/API/glib/APIContentRuleListStoreGLib.cpp
+
     GPUProcess/media/win/RemoteMediaPlayerProxyWin.cpp
 
     GPUProcess/win/GPUProcessMainWin.cpp

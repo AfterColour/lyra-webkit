@@ -2988,6 +2988,30 @@ void WKPageDrawPagesToPDF(WKPageRef pageRef, WKFrameRef frame, WKPrintInfo print
 }
 #endif
 
+void WKPageDrawPageToImageForPrinting(WKPageRef pageRef, WKFrameRef frame, WKPrintInfo printInfo, uint32_t pageIndex, float scale, WKPageDrawPageToImageForPrintingFunction callback, void* context)
+{
+#if PLATFORM(WIN)
+    CRASH_IF_SUSPENDED;
+    protect(toImpl(pageRef))->drawPageToImageForPrinting(*protect(toImpl(frame)), printInfoFromWKPrintInfo(printInfo), pageIndex, scale, [context, callback](std::optional<WebCore::ShareableBitmapHandle>&& handle) {
+        RefPtr<WebCore::ShareableBitmap> bitmap;
+        if (handle)
+            bitmap = WebCore::ShareableBitmap::create(WTF::move(*handle), WebCore::SharedMemory::Protection::ReadOnly);
+        if (!bitmap) {
+            callback(nullptr, 0, 0, 0, context);
+            return;
+        }
+        callback(bitmap->span().data(), bitmap->size().width(), bitmap->size().height(), bitmap->bytesPerRow(), context);
+    });
+#else
+    UNUSED_PARAM(pageRef);
+    UNUSED_PARAM(frame);
+    UNUSED_PARAM(printInfo);
+    UNUSED_PARAM(pageIndex);
+    UNUSED_PARAM(scale);
+    callback(nullptr, 0, 0, 0, context);
+#endif
+}
+
 void WKPageBeginPrinting(WKPageRef pageRef, WKFrameRef frame, WKPrintInfo printInfo)
 {
     CRASH_IF_SUSPENDED;

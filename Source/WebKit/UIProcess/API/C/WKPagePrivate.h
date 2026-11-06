@@ -91,6 +91,12 @@ WK_EXPORT void WKPageBeginPrinting(WKPageRef page, WKFrameRef frame, WKPrintInfo
 WK_EXPORT void WKPageDrawPagesToPDF(WKPageRef page, WKFrameRef frame, WKPrintInfo printInfo, uint32_t first, uint32_t count, WKPageDrawToPDFFunction callback, void* context);
 WK_EXPORT void WKPageEndPrinting(WKPageRef page);
 
+// Lyra (Windows): one page of WKPageComputePagesForPrinting as a 32-bit BGRA bitmap (premultiplied,
+// rows top to bottom), `scale` device pixels per CSS pixel. `pixels` is null when the page could
+// not be drawn; it is only valid during the callback.
+typedef void (*WKPageDrawPageToImageForPrintingFunction)(const void* pixels, uint32_t width, uint32_t height, uint32_t bytesPerRow, void* context);
+WK_EXPORT void WKPageDrawPageToImageForPrinting(WKPageRef page, WKFrameRef frame, WKPrintInfo printInfo, uint32_t pageIndex, float scale, WKPageDrawPageToImageForPrintingFunction callback, void* context);
+
 WK_EXPORT bool WKPageGetIsControlledByAutomation(WKPageRef page);
 WK_EXPORT void WKPageSetControlledByAutomation(WKPageRef page, bool controlled);
 

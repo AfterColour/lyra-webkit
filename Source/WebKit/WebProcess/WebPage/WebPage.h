@@ -1544,6 +1544,10 @@ public:
     void computePagesForPrintingDuringDOMPrintOperation(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(const Vector<WebCore::IntRect>&, double, const WebCore::FloatBoxExtent&)>&& completionHandler) { computePagesForPrinting(frameID, printInfo, WTF::move(completionHandler)); }
     void computePagesForPrintingImpl(WebCore::FrameIdentifier, const PrintInfo&, Vector<WebCore::IntRect>& pageRects, double& totalScaleFactor, WebCore::FloatBoxExtent& computedMargin);
     static float totalScaleFactorForPrinting(WebCore::PrintContext&, const PrintInfo&);
+#if PLATFORM(WIN)
+    // Lyra: one printed page as a bitmap (after ComputePagesForPrinting), `scale` device pixels per CSS pixel.
+    void drawPageToImageForPrinting(WebCore::FrameIdentifier, const PrintInfo&, uint32_t pageIndex, float scale, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+#endif
 #if PLATFORM(COCOA)
     void drawToPDF(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground,  CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
     void drawRectToImage(WebCore::FrameIdentifier, const PrintInfo&, const WebCore::IntRect&, const WebCore::IntSize&, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);

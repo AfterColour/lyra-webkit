@@ -18650,6 +18650,14 @@ void WebPageProxy::setFrameHasPDFPlugin(IPC::Connection& connection, FrameIdenti
 }
 #endif
 
+#if PLATFORM(WIN)
+void WebPageProxy::drawPageToImageForPrinting(WebFrameProxy& frame, const PrintInfo& printInfo, uint32_t pageIndex, float scale, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&& callback)
+{
+    auto frameID = frame.frameID();
+    sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawPageToImageForPrinting(frameID, printInfo, pageIndex, scale), WTF::move(callback));
+}
+#endif
+
 #if PLATFORM(COCOA)
 bool WebPageProxy::shouldUseRemoteSnapshotting(const WebFrameProxy* rootFrame)
 {

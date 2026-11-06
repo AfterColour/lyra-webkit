@@ -7896,6 +7896,43 @@ void WebPage::pdfSnapshotAtSize(LocalFrame& localMainFrame, GraphicsContext& con
     }
 }
 
+#if PLATFORM(WIN)
+void WebPage::drawPageToImageForPrinting(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, uint32_t pageIndex, float scale, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& reply)
+{
+    if (!m_printContext)
+        beginPrinting(frameID, printInfo);
+    RefPtr printContext = m_printContext;
+    if (!printContext || pageIndex >= printContext->pageCount() || !(scale > 0)) {
+        reply(std::nullopt);
+        return;
+    }
+
+    auto pageRect = printContext->pageRect(pageIndex);
+    auto imageSize = expandedIntSize(FloatSize(pageRect.width() * scale, pageRect.height() * scale));
+    // Keep a page well inside what a bitmap can hold (A4 at 300 dpi is about 2500 x 3500).
+    if (imageSize.isEmpty() || imageSize.width() > 8192 || imageSize.height() > 8192) {
+        reply(std::nullopt);
+        return;
+    }
+
+    RefPtr bitmap = ShareableBitmap::create({ imageSize });
+    if (!bitmap) {
+        reply(std::nullopt);
+        return;
+    }
+    auto graphicsContext = bitmap->createGraphicsContext();
+    if (!graphicsContext) {
+        reply(std::nullopt);
+        return;
+    }
+    graphicsContext->fillRect(FloatRect { { }, imageSize }, Color::white);
+    printContext->spoolPage(*graphicsContext, pageIndex, imageSize.width());
+    graphicsContext = nullptr;
+
+    reply(bitmap->createHandle(SharedMemory::Protection::ReadOnly));
+}
+#endif
+
 #if PLATFORM(GTK)
 void WebPage::drawPagesForPrinting(FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<SharedMemory::Handle>&&, WebCore::ResourceError&&)>&& completionHandler)
 {

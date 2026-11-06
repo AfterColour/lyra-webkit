@@ -59,3 +59,8 @@
 #if !defined(ENABLE_WEBPROCESS_CACHE)
 #define ENABLE_WEBPROCESS_CACHE 1
 #endif
+
+/* Lyra: wheel scrolling on the scrolling thread, moving layers in the GPU process (ScrollingCoordinatorWC). */
+#if !defined(ENABLE_SCROLLING_THREAD) && defined(ENABLE_ASYNC_SCROLLING) && ENABLE_ASYNC_SCROLLING && defined(USE_GRAPHICS_LAYER_WC) && USE_GRAPHICS_LAYER_WC
+#define ENABLE_SCROLLING_THREAD 1
+#endif

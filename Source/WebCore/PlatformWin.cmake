@@ -44,6 +44,21 @@ if (USE_GSTREAMER)
     )
 endif ()
 
+if (ENABLE_ASYNC_SCROLLING)
+    # Lyra: threaded scrolling for the WC compositor.
+    list(APPEND WebCore_SOURCES
+        page/scrolling/wc/ScrollingCoordinatorWC.cpp
+        page/scrolling/wc/ScrollingTreeNodesWC.cpp
+        page/scrolling/wc/ScrollingTreeWC.cpp
+    )
+    list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+        "${WEBCORE_DIR}/page/scrolling/wc"
+    )
+    list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+        page/scrolling/wc/ScrollingLayerSinkWC.h
+    )
+endif ()
+
 list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/accessibility/win"
     "${WEBCORE_DIR}/page/win"

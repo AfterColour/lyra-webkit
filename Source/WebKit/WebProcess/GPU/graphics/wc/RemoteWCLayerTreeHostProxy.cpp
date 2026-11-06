@@ -70,6 +70,13 @@ GPUProcessConnection& RemoteWCLayerTreeHostProxy::ensureGPUProcessConnection()
     return WebProcess::singleton().ensureGPUProcessConnection();
 }
 
+RefPtr<IPC::Connection> RemoteWCLayerTreeHostProxy::connectionIfConnected() const
+{
+    if (RefPtr gpuProcessConnection = m_gpuProcessConnection.get())
+        return &gpuProcessConnection->connection();
+    return nullptr;
+}
+
 void RemoteWCLayerTreeHostProxy::disconnectGpuProcessIfNeeded()
 {
     if (auto gpuProcessConnection = std::exchange(m_gpuProcessConnection, nullptr).get()) {

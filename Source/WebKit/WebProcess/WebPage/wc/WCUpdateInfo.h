@@ -29,6 +29,7 @@
 
 #include "WCBackingStore.h"
 #include "WCContentBufferIdentifier.h"
+#include "WCScrollingLayerUpdate.h"
 #include <WebCore/GraphicsLayer.h>
 #include <WebCore/TextureMapperSparseBackingStore.h>
 #include <optional>
@@ -128,6 +129,13 @@ struct WCUpdateInfo {
     Vector<WebCore::PlatformLayerIdentifier> addedLayers;
     Vector<WebCore::PlatformLayerIdentifier> removedLayers;
     Vector<WCLayerUpdateInfo> changedLayers;
+    // Lyra: layers the scrolling tree moved on the main thread, and the sequence number of the
+    // scrolling tree state this update stands for (see WebCore::ScrollingLayerSinkWC).
+    uint64_t scrollingSequence { 0 };
+    Vector<WCScrollingLayerUpdate> scrollingLayers;
+    // Lyra: the page's background, painted where no tile is ready yet (the scrolling thread can
+    // move the page faster than the main thread paints it).
+    WebCore::Color backgroundColor;
 };
 
 } // namespace WebKit

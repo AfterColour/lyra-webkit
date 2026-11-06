@@ -185,7 +185,7 @@ public:
     PlatformWheelEventPhase phase() const { return m_phase; }
     PlatformWheelEventPhase momentumPhase() const { return m_momentumPhase; }
 
-#if ENABLE(KINETIC_SCROLLING)
+#if ENABLE(KINETIC_SCROLLING) || ENABLE(ASYNC_SCROLLING) // Lyra: the scrolling tree uses these too.
     bool isGestureStart() const;
     bool isGestureCancel() const;
 
@@ -260,7 +260,7 @@ inline bool PlatformWheelEvent::isMomentumEvent() const { return momentumPhase()
 
 #endif // ENABLE(ASYNC_SCROLLING)
 
-#if ENABLE(KINETIC_SCROLLING)
+#if ENABLE(KINETIC_SCROLLING) || ENABLE(ASYNC_SCROLLING)
 
 inline bool PlatformWheelEvent::isGestureEvent() const
 {
@@ -298,7 +298,7 @@ inline FloatSize PlatformWheelEvent::swipeVelocity() const
     return isTransitioningToMomentumScroll() ? FloatSize(m_wheelTicksX, m_wheelTicksY) : FloatSize();
 }
 
-#endif // ENABLE(KINETIC_SCROLLING)
+#endif // ENABLE(KINETIC_SCROLLING) || ENABLE(ASYNC_SCROLLING)
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const PlatformWheelEvent&);
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, EventHandling);

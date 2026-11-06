@@ -34,6 +34,10 @@
 #include <WebCore/GraphicsLayerFactory.h>
 #include <WebCore/Timer.h>
 
+namespace WebCore {
+class ScrollingLayerSinkWC;
+}
+
 namespace WebKit {
 
 class DrawingAreaWC final
@@ -70,6 +74,12 @@ private:
     void updatePreferences(const WebPreferencesStore&) override;
     bool shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView&) const override;
     void displayDidRefresh(MonotonicTime = MonotonicTime::now()) override;
+#if ENABLE(SCROLLING_THREAD)
+    // Lyra: wheel scrolling on the scrolling thread (WebCore::ScrollingCoordinatorWC).
+    bool supportsAsyncScrolling() const override { return true; }
+    void registerScrollingTree() override;
+    void unregisterScrollingTree() override;
+#endif
     // GraphicsLayerWC::Observer
     void graphicsLayerAdded(GraphicsLayerWC&) override;
     void graphicsLayerRemoved(GraphicsLayerWC&) override;
@@ -120,6 +130,15 @@ private:
     // MyBrowser: the GPU process crashed or was restarted; resend the whole layer tree.
     void resyncAfterGPUProcessLoss();
     uint64_t m_compositorGeneration { 0 };
+
+#if ENABLE(SCROLLING_THREAD)
+    // Lyra: where the scrolling tree reports the layers it moves; the scrolling thread sends its
+    // moves straight to the GPU process once the layer tree host exists there.
+    WebCore::ScrollingLayerSinkWC* scrollingLayerSink();
+    void takeScrollingLayerUpdates(WCUpdateInfo&);
+    void updateScrollingLayerSender();
+    RefPtr<WebCore::ScrollingLayerSinkWC> m_scrollingLayerSink;
+#endif
 
 #if OS(WINDOWS) && USE(GSTREAMER)
     double m_traceUpdateStart { -1 };

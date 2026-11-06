@@ -33,6 +33,7 @@
 #include <WebCore/TextureMapperFPSCounter.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
+#include <atomic>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -45,6 +46,7 @@ class TextureMapperTiledBackingStore;
 namespace WebKit {
 
 class WCSceneContext;
+struct WCScrollingLayerUpdate;
 struct WCUpdateInfo;
 
 class WCScene {
@@ -59,6 +61,12 @@ public:
     // layer tree update from the web process (the D3D11 video layer). On-screen scenes only.
     bool recomposite();
 
+    // Lyra: layers moved by the scrolling thread of the web process. willApply... on the thread
+    // that receives the message, apply... on the scene's thread; the scene is painted again once
+    // the last of the queued batches is applied.
+    void willApplyScrollingLayerUpdates() { ++m_pendingScrollingLayerUpdates; }
+    void applyScrollingLayerUpdates(uint64_t sequence, Vector<WCScrollingLayerUpdate>&&);
+
 private:
     struct Layer;
     using LayerMap = HashMap<WebCore::PlatformLayerIdentifier, std::unique_ptr<Layer>>;
@@ -72,6 +80,12 @@ private:
     std::optional<WebCore::PlatformLayerIdentifier> m_lastRootLayer;
     WebCore::IntSize m_lastViewport;
     bool m_canRecomposite { false };
+    std::atomic<unsigned> m_pendingScrollingLayerUpdates { 0 };
+    bool m_scrollingLayersChanged { false };
+    WebCore::Color m_backgroundColor { WebCore::Color::white };
+    void clearToBackground();
+
+    bool applyScrollingLayerUpdate(Layer&, uint64_t sequence, const WCScrollingLayerUpdate&);
 };
 
 } // namespace WebKit

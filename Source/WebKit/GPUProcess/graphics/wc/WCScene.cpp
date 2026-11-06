@@ -84,6 +84,12 @@ public:
     std::unique_ptr<WebCore::TextureMapperLayer> backdropLayer;
     WCContentBuffer* contentBuffer { nullptr };
     Markable<WebCore::LayerHostingContextIdentifier> hostIdentifier;
+
+    // Lyra: what the scrolling tree last did to this layer. Moves with an older sequence number
+    // (an update of the main thread that arrives after newer scrolling-thread moves) are ignored.
+    uint64_t scrollingSequence { 0 };
+    WebCore::FloatPoint position;
+    WebCore::FloatPoint boundsOrigin;
 };
 
 void WCScene::initialize(WCSceneContext& context)
@@ -152,14 +158,18 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
             }
             layer->texmapLayer.setReplicaLayer(replicaLayer);
         }
-        if (layerUpdate.changes & WCLayerChange::Position)
+        if (layerUpdate.changes & WCLayerChange::Position && layer->scrollingSequence <= update.scrollingSequence) {
             layer->texmapLayer.setPosition(layerUpdate.position);
+            layer->position = layerUpdate.position;
+        }
         if (layerUpdate.changes & WCLayerChange::AnchorPoint)
             layer->texmapLayer.setAnchorPoint(layerUpdate.anchorPoint);
         if (layerUpdate.changes & WCLayerChange::Size)
             layer->texmapLayer.setSize(layerUpdate.size);
-        if (layerUpdate.changes & WCLayerChange::BoundsOrigin)
+        if (layerUpdate.changes & WCLayerChange::BoundsOrigin && layer->scrollingSequence <= update.scrollingSequence) {
             layer->texmapLayer.setBoundsOrigin(layerUpdate.boundsOrigin);
+            layer->boundsOrigin = layerUpdate.boundsOrigin;
+        }
         if (layerUpdate.changes & WCLayerChange::Preserves3D)
             layer->texmapLayer.setPreserves3D(layerUpdate.preserves3D);
         if (layerUpdate.changes & WCLayerChange::ContentsRect)
@@ -288,6 +298,11 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
         }
     }
 
+    for (auto& scrollingUpdate : update.scrollingLayers) {
+        if (auto* layer = m_layers.get(scrollingUpdate.id))
+            applyScrollingLayerUpdate(*layer, update.scrollingSequence, scrollingUpdate);
+    }
+
     for (auto id : update.removedLayers)
         m_layers.remove(id);
 
@@ -317,8 +332,14 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
         readPixel = true;
         texture = WebCore::BitmapTexturePool::singleton().acquireTexture(update.viewport, { WebCore::BitmapTexture::Flags::SupportsAlpha });
         surface = texture.get();
-    } else
+    } else {
         glViewport(0, 0, update.viewport.width(), update.viewport.height());
+        if (!update.remoteContextHostedIdentifier) {
+            if (update.backgroundColor.isVisible())
+                m_backgroundColor = update.backgroundColor;
+            clearToBackground();
+        }
+    }
 
     m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, surface);
     rootLayer->paint(*m_textureMapper);
@@ -351,6 +372,53 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
     return result;
 }
 
+bool WCScene::applyScrollingLayerUpdate(Layer& layer, uint64_t sequence, const WCScrollingLayerUpdate& update)
+{
+    if (sequence < layer.scrollingSequence)
+        return false;
+    layer.scrollingSequence = sequence;
+    if (update.isBoundsOrigin) {
+        if (layer.boundsOrigin == update.point)
+            return false;
+        layer.boundsOrigin = update.point;
+        layer.texmapLayer.setBoundsOrigin(update.point);
+        return true;
+    }
+    if (layer.position == update.point)
+        return false;
+    layer.position = update.point;
+    layer.texmapLayer.setPosition(update.point);
+    return true;
+}
+
+void WCScene::applyScrollingLayerUpdates(uint64_t sequence, Vector<WCScrollingLayerUpdate>&& updates)
+{
+    for (auto& update : updates) {
+        if (auto* layer = m_layers.get(update.id)) {
+            if (applyScrollingLayerUpdate(*layer, sequence, update))
+                m_scrollingLayersChanged = true;
+        }
+    }
+    // Several batches may be waiting (the previous frame was still being presented): paint once,
+    // after the last of them.
+    if (--m_pendingScrollingLayerUpdates)
+        return;
+    if (!std::exchange(m_scrollingLayersChanged, false))
+        return;
+    MEDIA_TRACE_TIME("GPU: scrolling recomposite");
+    recomposite();
+}
+
+// Lyra: the window's buffers keep earlier frames. Where no layer paints (tiles the main thread
+// has not painted yet, after a fast scroll on the scrolling thread) they showed through as smears.
+void WCScene::clearToBackground()
+{
+    auto [r, g, b, a] = m_backgroundColor.toColorTypeLossy<WebCore::SRGBA<float>>().resolved();
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(r, g, b, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+
 bool WCScene::recomposite()
 {
     if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper)
@@ -361,6 +429,7 @@ bool WCScene::recomposite()
 
     root->texmapLayer.applyAnimationsRecursively(MonotonicTime::now());
     glViewport(0, 0, m_lastViewport.width(), m_lastViewport.height());
+    clearToBackground();
     m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, nullptr);
     root->texmapLayer.paint(*m_textureMapper);
     m_fpsCounter.updateFPSAndDisplay(*m_textureMapper);

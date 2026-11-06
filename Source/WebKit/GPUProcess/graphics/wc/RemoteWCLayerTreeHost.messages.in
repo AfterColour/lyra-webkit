@@ -29,6 +29,7 @@
 ]
 messages -> RemoteWCLayerTreeHost {
     Update(struct WebKit::WCUpdateInfo updateInfo) -> (std::optional<WebKit::UpdateInfo> updateInfo)
+    UpdateScrollingLayers(uint64_t sequence, Vector<WebKit::WCScrollingLayerUpdate> updates)
 }
 
 #endif // USE(GRAPHICS_LAYER_WC)

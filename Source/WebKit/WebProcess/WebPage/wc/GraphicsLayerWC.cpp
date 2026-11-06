@@ -288,7 +288,12 @@ void GraphicsLayerWC::syncPosition(const FloatPoint& point)
     if (point == m_position)
         return;
     GraphicsLayer::syncPosition(point);
+#if ENABLE(SCROLLING_THREAD)
+    // Lyra: the scrolling tree has moved this layer in the GPU process already (ScrollingLayerSinkWC);
+    // the main thread's position is older and would move it back.
+#else
     noteLayerPropertyChanged(WCLayerChange::Position, DontScheduleFlush);
+#endif
 }
 
 void GraphicsLayerWC::setAnchorPoint(const FloatPoint3D& point)
@@ -341,7 +346,11 @@ void GraphicsLayerWC::syncBoundsOrigin(const FloatPoint& origin)
     if (origin == m_boundsOrigin)
         return;
     GraphicsLayer::syncBoundsOrigin(origin);
+#if ENABLE(SCROLLING_THREAD)
+    // Lyra: see syncPosition().
+#else
     noteLayerPropertyChanged(WCLayerChange::BoundsOrigin, DontScheduleFlush);
+#endif
 }
 
 void GraphicsLayerWC::setTransform(const TransformationMatrix& t)

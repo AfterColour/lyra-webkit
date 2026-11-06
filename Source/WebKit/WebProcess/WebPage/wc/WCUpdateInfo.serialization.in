@@ -109,6 +109,12 @@ header: "WCUpdateInfo.h"
     [OptionalTupleBit=WebKit::WCLayerChange::RemoteFrame] Markable<WebCore::LayerHostingContextIdentifier> hostIdentifier;
 }
 
+struct WebKit::WCScrollingLayerUpdate {
+    WebCore::PlatformLayerIdentifier id;
+    WebCore::FloatPoint point;
+    bool isBoundsOrigin;
+}
+
 struct WebKit::WCUpdateInfo {
     WebCore::IntSize viewport;
     Markable<WebCore::LayerHostingContextIdentifier> remoteContextHostedIdentifier;
@@ -116,6 +122,9 @@ struct WebKit::WCUpdateInfo {
     Vector<WebCore::PlatformLayerIdentifier> addedLayers;
     Vector<WebCore::PlatformLayerIdentifier> removedLayers;
     Vector<WebKit::WCLayerUpdateInfo> changedLayers;
+    uint64_t scrollingSequence;
+    Vector<WebKit::WCScrollingLayerUpdate> scrollingLayers;
+    WebCore::Color backgroundColor;
 }
 
 #endif

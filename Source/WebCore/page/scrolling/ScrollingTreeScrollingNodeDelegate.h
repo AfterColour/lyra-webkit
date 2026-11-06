@@ -66,7 +66,7 @@ public:
     virtual FloatPoint adjustedScrollPosition(const FloatPoint& scrollPosition) const { return scrollPosition; }
     virtual String scrollbarStateForOrientation(ScrollbarOrientation) const { return ""_s; }
 
-    virtual Vector<PlatformLayerContainer, 2> hitTestableScrollbarLayers() const { return { }; }
+    virtual Vector<ScrollingPlatformLayerContainer, 2> hitTestableScrollbarLayers() const { return { }; }
 
     virtual float rubberbandHyperbolicCoefficientForTesting() const { return 0; }
 

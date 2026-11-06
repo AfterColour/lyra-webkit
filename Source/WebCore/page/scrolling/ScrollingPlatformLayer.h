@@ -36,4 +36,22 @@ using ScrollingPlatformLayer = CoordinatedPlatformLayer;
 using ScrollingPlatformLayer = PlatformLayer;
 #endif
 
+#if USE(TEXTURE_MAPPER) && !USE(COORDINATED_GRAPHICS)
+// Lyra (WC): PlatformLayerContainer owns its layer here (std::unique_ptr). The scrolling tree never
+// holds platform layers in this port (it knows layers by identifier), so a plain pointer will do.
+struct ScrollingPlatformLayerContainer {
+    ScrollingPlatformLayerContainer(ScrollingPlatformLayer* layer = nullptr)
+        : m_layer(layer)
+    {
+    }
+    ScrollingPlatformLayer* get() const { return m_layer; }
+    explicit operator bool() const { return !!m_layer; }
+    friend bool operator==(const ScrollingPlatformLayerContainer&, const ScrollingPlatformLayerContainer&) = default;
+
+    ScrollingPlatformLayer* m_layer;
+};
+#else
+using ScrollingPlatformLayerContainer = PlatformLayerContainer;
+#endif
+
 } // namespace WebCore

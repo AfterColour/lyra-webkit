@@ -29,10 +29,12 @@
 #if USE(GRAPHICS_LAYER_WC)
 
 #include "DrawingAreaProxyMessages.h"
+#include "EventDispatcher.h"
 #include "GraphicsLayerWC.h"
 #include "ImageBufferShareableBitmapBackend.h"
 #include "MessageSenderInlines.h"
 #include "RemoteRenderingBackendProxy.h"
+#include "RemoteWCLayerTreeHostMessages.h"
 #include "RemoteWCLayerTreeHostProxy.h"
 #include "UpdateInfo.h"
 #include "WebFrame.h"
@@ -52,6 +54,10 @@
 #include <WebCore/LocalFrameView.h>
 #include <WebCore/Page.h>
 #include <WebCore/Settings.h>
+#if ENABLE(SCROLLING_THREAD)
+#include <WebCore/ScrollingCoordinator.h>
+#include <WebCore/ScrollingLayerSinkWC.h>
+#endif
 #include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
@@ -75,6 +81,10 @@ void DrawingAreaWC::resyncAfterGPUProcessLoss()
 {
     MEDIA_TRACE("GPU process lost: resending %u layers", static_cast<unsigned>(m_liveGraphicsLayers.size()));
     ++m_compositorGeneration;
+#if ENABLE(SCROLLING_THREAD)
+    if (m_scrollingLayerSink)
+        m_scrollingLayerSink->setSender({ });
+#endif
     // Buffers of the old GPU process are gone with it.
     m_freeTileBuffers.clear();
     m_updateInfo = { };
@@ -88,6 +98,10 @@ void DrawingAreaWC::resyncAfterGPUProcessLoss()
 DrawingAreaWC::~DrawingAreaWC()
 {
     m_remoteWCLayerTreeHostProxy->setDidLoseGPUProcessHandler({ });
+#if ENABLE(SCROLLING_THREAD)
+    if (m_scrollingLayerSink)
+        m_scrollingLayerSink->setSender({ });
+#endif
     while (auto layer = m_liveGraphicsLayers.removeHead())
         layer->clearObserver();
 }
@@ -303,6 +317,9 @@ void DrawingAreaWC::updateRendering()
     webPage->flushPendingEditorStateUpdate();
 
     OptionSet<FinalizeRenderingUpdateFlags> flags;
+#if ENABLE(SCROLLING_THREAD)
+    flags.add(FinalizeRenderingUpdateFlags::ApplyScrollingTreeLayerPositions);
+#endif
     webPage->finalizeRenderingUpdate(flags);
     webPage->didUpdateRendering();
 
@@ -340,6 +357,15 @@ void DrawingAreaWC::sendUpdateAC()
         m_updateInfo.viewport = WebCore::expandedIntSize(viewport);
         updateRootLayerDeviceScaleFactor(rootLayer.layer);
         rootLayer.layer->flushCompositingStateForThisLayerOnly();
+#if ENABLE(SCROLLING_THREAD)
+        takeScrollingLayerUpdates(m_updateInfo);
+        if (RefPtr frameView = isMainFrame ? m_webPage->localMainFrameView() : nullptr) {
+            auto color = frameView->documentBackgroundColor();
+            if (!color.isVisible())
+                color = frameView->baseBackgroundColor();
+            m_updateInfo.backgroundColor = color;
+        }
+#endif
 
         // Because our view-relative overlay root layer is not attached to the FrameView's GraphicsLayer tree, we need to flush it manually.
         FloatRect visibleRect({ }, size);
@@ -383,10 +409,68 @@ void DrawingAreaWC::sendUpdateAC()
                     if (willCallDisplayDidRefresh)
                         displayDidRefresh();
                 });
+#if ENABLE(SCROLLING_THREAD)
+                // The layer tree host exists in the GPU process now: the scrolling thread may send to it.
+                updateScrollingLayerSender();
+#endif
             });
         });
     }
 }
+
+#if ENABLE(SCROLLING_THREAD)
+void DrawingAreaWC::registerScrollingTree()
+{
+    WebProcess::singleton().eventDispatcher().addScrollingTreeForPage(m_webPage.get());
+}
+
+void DrawingAreaWC::unregisterScrollingTree()
+{
+    WebProcess::singleton().eventDispatcher().removeScrollingTreeForPage(m_webPage.get());
+}
+
+WebCore::ScrollingLayerSinkWC* DrawingAreaWC::scrollingLayerSink()
+{
+    if (!m_scrollingLayerSink) {
+        RefPtr page = m_webPage->corePage();
+        if (!page || !page->settings().scrollingCoordinatorEnabled())
+            return nullptr;
+        RefPtr scrollingCoordinator = page->scrollingCoordinator();
+        if (!scrollingCoordinator)
+            return nullptr;
+        m_scrollingLayerSink = scrollingCoordinator->scrollingLayerSinkWC();
+    }
+    return m_scrollingLayerSink.get();
+}
+
+void DrawingAreaWC::takeScrollingLayerUpdates(WCUpdateInfo& updateInfo)
+{
+    RefPtr sink = scrollingLayerSink();
+    if (!sink)
+        return;
+    auto mainThreadUpdates = sink->takeMainThreadUpdates();
+    updateInfo.scrollingSequence = mainThreadUpdates.sequence;
+    updateInfo.scrollingLayers = WTF::map(mainThreadUpdates.updates, [](auto& update) {
+        return WCScrollingLayerUpdate { update.layerID, update.point, update.isBoundsOrigin };
+    });
+}
+
+void DrawingAreaWC::updateScrollingLayerSender()
+{
+    RefPtr sink = scrollingLayerSink();
+    if (!sink || sink->hasSender())
+        return;
+    RefPtr connection = m_remoteWCLayerTreeHostProxy->connectionIfConnected();
+    if (!connection)
+        return;
+    sink->setSender([connection = connection.releaseNonNull(), destinationID = m_remoteWCLayerTreeHostProxy->layerTreeHostDestinationID()](uint64_t sequence, Vector<WebCore::ScrollingLayerUpdateWC>&& updates) {
+        auto wcUpdates = WTF::map(updates, [](auto& update) {
+            return WCScrollingLayerUpdate { update.layerID, update.point, update.isBoundsOrigin };
+        });
+        connection->send(Messages::RemoteWCLayerTreeHost::UpdateScrollingLayers(sequence, wcUpdates), destinationID);
+    });
+}
+#endif
 
 void DrawingAreaWC::updateRootLayerDeviceScaleFactor(WebCore::GraphicsLayer& layer)
 {

@@ -44,6 +44,7 @@ namespace WebKit {
 class GPUConnectionToWebProcess;
 class WCScene;
 struct UpdateInfo;
+struct WCScrollingLayerUpdate;
 struct WCUpdateInfo;
 
 class RemoteWCLayerTreeHost : public IPC::MessageReceiver, private IPC::MessageSender, public RefCounted<RemoteWCLayerTreeHost> {
@@ -53,6 +54,8 @@ public:
     ~RemoteWCLayerTreeHost();
     // message handlers
     void update(WCUpdateInfo&&, CompletionHandler<void(std::optional<WebKit::UpdateInfo>)>&&);
+    // Lyra: layers moved by the scrolling thread of the web process.
+    void updateScrollingLayers(uint64_t sequence, Vector<WCScrollingLayerUpdate>&&);
 
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }

@@ -107,6 +107,14 @@ void RemoteWCLayerTreeHost::update(WCUpdateInfo&& update, CompletionHandler<void
     });
 }
 
+void RemoteWCLayerTreeHost::updateScrollingLayers(uint64_t sequence, Vector<WCScrollingLayerUpdate>&& updates)
+{
+    m_scene->willApplyScrollingLayerUpdates();
+    remoteGraphicsStreamWorkQueue().dispatch([scene = m_scene.get(), sequence, updates = WTF::move(updates)]() mutable {
+        scene->applyScrollingLayerUpdates(sequence, WTF::move(updates));
+    });
+}
+
 } // namespace WebKit
 
 #endif // USE(GRAPHICS_LAYER_WC)

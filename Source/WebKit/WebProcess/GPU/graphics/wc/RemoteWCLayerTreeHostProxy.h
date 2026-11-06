@@ -54,6 +54,11 @@ public:
     // whose scene is empty, so the drawing area has to send the whole layer tree again.
     void setDidLoseGPUProcessHandler(Function<void()>&& handler) { m_didLoseGPUProcess = WTF::move(handler); }
 
+    // Lyra: the connection to the GPU process once the layer tree host exists there, and the
+    // host's identifier, for messages sent from other threads (the scrolling thread).
+    RefPtr<IPC::Connection> connectionIfConnected() const;
+    uint64_t layerTreeHostDestinationID() const { return m_wcLayerTreeHostIdentifier.toUInt64(); }
+
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
 private:

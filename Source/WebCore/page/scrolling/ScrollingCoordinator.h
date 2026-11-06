@@ -61,6 +61,9 @@ class Scrollbar;
 class ViewportConstraints;
 
 struct KeyboardScroll;
+#if ENABLE(SCROLLING_THREAD) && USE(GRAPHICS_LAYER_WC)
+class ScrollingLayerSinkWC;
+#endif
 
 using FramesPerSecond = unsigned;
 using PlatformDisplayID = uint32_t;
@@ -112,6 +115,11 @@ public:
 
     virtual void willStartPlatformRenderingUpdate() { }
     virtual void didCompletePlatformRenderingUpdate() { }
+
+#if ENABLE(SCROLLING_THREAD) && USE(GRAPHICS_LAYER_WC)
+    // Lyra: where the scrolling tree of the WC port reports the layers it moves (ScrollingCoordinatorWC).
+    virtual ScrollingLayerSinkWC* scrollingLayerSinkWC() { return nullptr; }
+#endif
 
 #if ENABLE(KINETIC_SCROLLING)
     // Dispatched by the scrolling tree during handleWheelEvent. This is required as long as scrollbars are painted on the main thread.

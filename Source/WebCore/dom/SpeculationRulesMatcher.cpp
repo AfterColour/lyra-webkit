@@ -40,6 +40,8 @@
 #include "SpeculationRules.h"
 #include "URLPattern.h"
 #include "URLPatternOptions.h"
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
@@ -65,15 +67,38 @@ static bool hasRenderedDescendants(Element& element)
 
 static bool matches(const SpeculationRules::DocumentPredicate&, Document&, HTMLAnchorElement&);
 
+// Lyra: compiling a URL pattern (parsing it and building its regular expressions) is far more
+// work than testing a URL against it, and the same few patterns of a page's speculation rules
+// are tested against every link of the page (thousands on Wikipedia) every time the rules are
+// considered again. Keep the compiled patterns (main thread only; invalid ones as null).
+static RefPtr<URLPattern> compiledURLPattern(const String& patternString, const String& baseURL)
+{
+    ASSERT(isMainThread());
+    static NeverDestroyed<HashMap<std::pair<String, String>, RefPtr<URLPattern>>> cache;
+    auto key = std::make_pair(patternString, baseURL);
+    auto iterator = cache->find(key);
+    if (iterator != cache->end())
+        return iterator->value;
+
+    if (cache->size() >= 256)
+        cache->clear();
+    RefPtr<URLPattern> pattern;
+    auto exceptionOrPattern = URLPattern::create(String { patternString }, String { baseURL }, URLPatternOptions());
+    if (!exceptionOrPattern.hasException())
+        pattern = exceptionOrPattern.releaseReturnValue();
+    cache->add(WTF::move(key), pattern);
+    return pattern;
+}
+
 static bool matches(const SpeculationRules::URLPatternPredicate& predicate, HTMLAnchorElement& anchor)
 {
+    String baseURL = anchor.document().baseURL().string();
     for (const auto& patternString : predicate.patterns) {
-        ExceptionOr<Ref<URLPattern>> exceptionOrPattern = URLPattern::create(patternString, String(anchor.document().baseURL().string()), URLPatternOptions());
-        if (exceptionOrPattern.hasException())
+        RefPtr pattern = compiledURLPattern(patternString, baseURL);
+        if (!pattern)
             continue;
 
-        Ref<URLPattern> pattern = exceptionOrPattern.returnValue();
-        auto result = pattern->test(anchor.href().string(), String(anchor.document().baseURL().string()));
+        auto result = pattern->test(anchor.href().string(), String { baseURL });
         if (!result.hasException() && result.returnValue())
             return true;
     }

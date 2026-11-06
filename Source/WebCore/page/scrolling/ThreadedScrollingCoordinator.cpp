@@ -68,7 +68,12 @@ void ThreadedScrollingCoordinator::commitTreeStateIfNeeded()
 
         LOG_WITH_STREAM(ScrollingTree, stream << "ThreadedScrollingCoordinator::commitTreeState: state tree " << scrollingStateTreeAsText(debugScrollingStateTreeAsTextBehaviors));
 
+#if USE(GRAPHICS_LAYER_WC)
+        // Lyra: the layers of the WC port live in the GPU process; its scrolling tree knows them by identifier.
+        auto stateTree = commitTreeStateForRootFrameID(key, LayerRepresentation::PlatformLayerIDRepresentation);
+#else
         auto stateTree = commitTreeStateForRootFrameID(key, LayerRepresentation::PlatformLayerRepresentation);
+#endif
         stateTree->setRootFrameIdentifier(key);
         protect(scrollingTree())->commitTreeState(WTF::move(stateTree));
     });

@@ -190,6 +190,10 @@
 #include "ScrollingCoordinatorCoordinated.h"
 #endif
 
+#if USE(GRAPHICS_LAYER_WC) && ENABLE(SCROLLING_THREAD)
+#include <WebCore/ScrollingLayerSinkWC.h>
+#endif
+
 #if PLATFORM(COCOA)
 #include "WebIconUtilities.h"
 #endif
@@ -1599,6 +1603,8 @@ RefPtr<WebCore::ScrollingCoordinator> WebChromeClient::createScrollingCoordinato
     return RemoteScrollingCoordinator::create(page.get());
 #elif USE(COORDINATED_GRAPHICS)
     return ScrollingCoordinatorCoordinated::create(page.get());
+#elif USE(GRAPHICS_LAYER_WC) && ENABLE(SCROLLING_THREAD)
+    return WebCore::createScrollingCoordinatorWC(corePage);
 #else
     return nullptr;
 #endif

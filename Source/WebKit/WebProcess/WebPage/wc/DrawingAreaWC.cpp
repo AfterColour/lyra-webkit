@@ -174,6 +174,9 @@ void DrawingAreaWC::updatePreferences(const WebPreferencesStore& store)
     // Lyra: the UI process never reports the display's refresh rate on Windows, so pages assumed
     // 60 Hz (requestAnimationFrame, animations, smooth scrolling). Tell the page the real one; the
     // display refresh monitor ticks at the display's vblank (DisplayRefreshMonitorWin).
+    // Rendering updates follow that rate, not the nearest 60 fps divisor (the preference is on by
+    // default everywhere but visionOS, and the UI process's setting did not reach here).
+    settings.setPreferPageRenderingUpdatesNear60FPSEnabled(false);
     DEVMODEW mode { };
     mode.dmSize = sizeof(mode);
     if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1) {
@@ -269,9 +272,31 @@ void DrawingAreaWC::triggerRenderingUpdate()
         m_hasDeferredRenderingUpdate = true;
         return;
     }
-    if (m_updateRenderingTimer.isActive())
+    if (m_updateRenderingTimer.isActive() || m_updateRenderingPosted)
         return;
+#if OS(WINDOWS)
+    // A zero-delay WebCore::Timer on Windows fires at the next system timer tick, up to 15.6 ms
+    // later: every frame waited for it, which held pages near 60 fps whatever the display's rate.
+    // Posting to the run loop starts the update right away.
+    m_updateRenderingPosted = true;
+    RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }] {
+        if (!weakThis)
+            return;
+        weakThis->m_updateRenderingPosted = false;
+        weakThis->updateRendering();
+    });
+#else
     m_updateRenderingTimer.startOneShot(0_s);
+#endif
+}
+
+bool DrawingAreaWC::scheduleRenderingUpdate()
+{
+    // While the GPU process draws the previous frame, the next one starts when it is done.
+    if (!m_waitDidUpdate)
+        return false;                    // at the next vblank (RenderingUpdateScheduler)
+    m_hasDeferredRenderingUpdate = true;
+    return true;
 }
 
 bool DrawingAreaWC::isCompositingMode()
@@ -668,9 +693,12 @@ void DrawingAreaWC::displayDidRefresh(MonotonicTime)
     if (m_traceUpdateStart >= 0)
         mediaTraceTiming("WP: frame total (start -> displayed)", MonotonicTime::now().secondsSinceEpoch().milliseconds() - m_traceUpdateStart);
 #endif
-    m_waitDidUpdate = false;
+    // Still "waiting" while the page finishes the frame: a next frame it asks for here (rAF callbacks
+    // scheduled during the update) is then deferred and started at once below, instead of at the
+    // vblank after this one, which halved the frame rate (60 fps on a 120 Hz display, ~64 on 240 Hz).
     didCompleteRenderingUpdateDisplay();
     didCompleteRenderingFrame();
+    m_waitDidUpdate = false;
     if (m_forceRepaintCompletionHandler) {
         if (m_isForceRepaintCompletionHandlerDeferred)
             m_isForceRepaintCompletionHandlerDeferred = false;

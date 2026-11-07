@@ -396,6 +396,8 @@
 #include <wtf/HexNumber.h>
 #include <wtf/Language.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RunLoop.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SystemTracing.h>
@@ -3030,7 +3032,21 @@ void Document::resolveStyle(ResolveStyleType type)
 
     // Re-evaluate speculation rules after DOM changes that trigger style recalculation.
     // That helps ensure CSS selector matching works correctly.
-    considerSpeculationRules();
+    // Lyra: at most a few times a second. Style is resolved for every hover and for each frame of
+    // an animation, and every evaluation tests every link of the page against the rules.
+    if (settings().speculationRulesPrefetchEnabled() && !speculationRules().prefetchRules().isEmptyIgnoringNullReferences()) {
+        static NeverDestroyed<WeakHashSet<Document, WeakPtrImplWithEventTargetData>> pending;
+        if (!pending->contains(*this)) {
+            pending->add(*this);
+            RunLoop::mainSingleton().dispatchAfter(250_ms, [weakThis = WeakPtr<Document, WeakPtrImplWithEventTargetData> { *this }] {
+                RefPtr protectedThis = weakThis.get();
+                if (!protectedThis)
+                    return;
+                pending->remove(*protectedThis);
+                protectedThis->considerSpeculationRules();
+            });
+        }
+    }
 }
 
 void Document::updateTextRenderer(Text& text, unsigned offsetOfReplacedText, unsigned lengthOfReplacedText)

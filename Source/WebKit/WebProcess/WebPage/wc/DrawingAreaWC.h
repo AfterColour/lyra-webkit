@@ -74,6 +74,7 @@ private:
     void updatePreferences(const WebPreferencesStore&) override;
     bool shouldUseTiledBackingForFrameView(const WebCore::LocalFrameView&) const override;
     void displayDidRefresh(MonotonicTime = MonotonicTime::now()) override;
+    bool scheduleRenderingUpdate() override;
 #if ENABLE(SCROLLING_THREAD)
     // Lyra: wheel scrolling on the scrolling thread (WebCore::ScrollingCoordinatorWC).
     bool supportsAsyncScrolling() const override { return true; }
@@ -112,6 +113,7 @@ private:
     bool m_hasDeferredRenderingUpdate { false };
     bool m_inUpdateRendering { false };
     bool m_waitDidUpdate { false };
+    bool m_updateRenderingPosted { false };   // Windows: an update posted to the run loop
     bool m_isForceRepaintCompletionHandlerDeferred { false };
     WCUpdateInfo m_updateInfo;
     Vector<RootLayerInfo, 1> m_rootLayers;

@@ -42,6 +42,7 @@
 #include "URLPatternOptions.h"
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 
@@ -67,38 +68,55 @@ static bool hasRenderedDescendants(Element& element)
 
 static bool matches(const SpeculationRules::DocumentPredicate&, Document&, HTMLAnchorElement&);
 
-// Lyra: compiling a URL pattern (parsing it and building its regular expressions) is far more
-// work than testing a URL against it, and the same few patterns of a page's speculation rules
-// are tested against every link of the page (thousands on Wikipedia) every time the rules are
-// considered again. Keep the compiled patterns (main thread only; invalid ones as null).
-static RefPtr<URLPattern> compiledURLPattern(const String& patternString, const String& baseURL)
+// Lyra: compiling a URL pattern (parsing it and building its matchers) is far more work than
+// testing a URL against it, and the patterns of a page's speculation rules are tested against every
+// link of the page every time the rules are considered again. fedoraproject.org lists thousands of
+// patterns. Keep the compiled patterns (main thread only; invalid ones as null).
+// Patterns without regular-expression groups (nearly all) are matched without the regular
+// expression engine: each run of it reserved fresh memory from the system (VirtualAlloc), and
+// testing every link against every pattern kept such pages busy for seconds.
+struct CompiledURLPattern {
+    RefPtr<URLPattern> withoutRegExp;
+    RefPtr<URLPattern> withRegExp;
+};
+
+static const CompiledURLPattern& compiledURLPattern(const String& patternString, const String& baseURL)
 {
     ASSERT(isMainThread());
-    static NeverDestroyed<HashMap<std::pair<String, String>, RefPtr<URLPattern>>> cache;
+    static NeverDestroyed<HashMap<std::pair<String, String>, CompiledURLPattern>> cache;
     auto key = std::make_pair(patternString, baseURL);
     auto iterator = cache->find(key);
     if (iterator != cache->end())
         return iterator->value;
 
-    if (cache->size() >= 256)
+    if (cache->size() >= 16384)
         cache->clear();
-    RefPtr<URLPattern> pattern;
-    auto exceptionOrPattern = URLPattern::create(String { patternString }, String { baseURL }, URLPatternOptions());
-    if (!exceptionOrPattern.hasException())
-        pattern = exceptionOrPattern.releaseReturnValue();
-    cache->add(WTF::move(key), pattern);
-    return pattern;
+    CompiledURLPattern compiled;
+    auto withoutRegExp = URLPattern::createWithoutRegExpSupport(String { patternString }, String { baseURL }, URLPatternOptions());
+    if (!withoutRegExp.hasException() && !withoutRegExp.returnValue()->hasRegExpGroups())
+        compiled.withoutRegExp = withoutRegExp.releaseReturnValue();
+    else {
+        auto withRegExp = URLPattern::create(String { patternString }, String { baseURL }, URLPatternOptions());
+        if (!withRegExp.hasException())
+            compiled.withRegExp = withRegExp.releaseReturnValue();
+    }
+    return cache->add(WTF::move(key), WTF::move(compiled)).iterator->value;
 }
 
 static bool matches(const SpeculationRules::URLPatternPredicate& predicate, HTMLAnchorElement& anchor)
 {
     String baseURL = anchor.document().baseURL().string();
+    URL url = anchor.href();
     for (const auto& patternString : predicate.patterns) {
-        RefPtr pattern = compiledURLPattern(patternString, baseURL);
-        if (!pattern)
+        auto& pattern = compiledURLPattern(patternString, baseURL);
+        if (pattern.withoutRegExp) {
+            if (pattern.withoutRegExp->testWithoutRegExp(url))
+                return true;
             continue;
-
-        auto result = pattern->test(anchor.href().string(), String { baseURL });
+        }
+        if (!pattern.withRegExp)
+            continue;
+        auto result = pattern.withRegExp->test(url.string(), String { baseURL });
         if (!result.hasException() && result.returnValue())
             return true;
     }

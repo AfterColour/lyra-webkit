@@ -30,8 +30,12 @@
 #include <wtf/TZoneMallocInlines.h>
 
 #if USE(GRAPHICS_LAYER_WC)
+#include "Color.h"
+#include "FloatQuad.h"
 #include "IntRect.h"
 #include "TextureMapper.h"
+#include <cmath>
+#include <numbers>
 
 #if PLATFORM(WIN)
 #include "MediaTraceWin.h"
@@ -41,12 +45,126 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextureMapperSparseBackingStore);
 
+// Lyra: placeholders and fade-in (see the header).
+static constexpr Seconds placeholderShowDelay = 70_ms; // a tile late by a frame or two shows nothing
+static constexpr Seconds placeholderAppear = 180_ms;
+static constexpr Seconds placeholderPulsePeriod = 1400_ms;
+static constexpr Seconds placeholderPulseLimit = 10_s; // then it stays still (nothing to animate)
+static constexpr Seconds tileFadeDuration = 160_ms;
+static constexpr Seconds pulseFrameInterval = 33_ms;
+static constexpr Seconds fadeFrameInterval = 7_ms;
+static Seconds s_animationFrameDelay;
+
+static void requestAnimationFrame(Seconds delay)
+{
+    if (!s_animationFrameDelay || delay < s_animationFrameDelay)
+        s_animationFrameDelay = std::max(delay, 1_ms);
+}
+
+Seconds TextureMapperSparseBackingStore::takeAnimationFrameDelay()
+{
+    return std::exchange(s_animationFrameDelay, 0_s);
+}
+
+static void drawPlaceholder(TextureMapper& textureMapper, const FloatRect& rect, const TransformationMatrix& transform, float opacity, MonotonicTime now)
+{
+    double phase = std::fmod(now.secondsSinceEpoch().seconds(), placeholderPulsePeriod.seconds()) / placeholderPulsePeriod.seconds();
+    float alpha = (0.05f + 0.045f * (0.5f - 0.5f * static_cast<float>(std::cos(2 * std::numbers::pi * phase)))) * opacity;
+    if (alpha <= 0.002f)
+        return;
+    textureMapper.drawSolidColor(rect, transform, Color(SRGBA<float> { 0.5f, 0.5f, 0.5f, alpha }), true);
+}
+
 void TextureMapperSparseBackingStore::setSize(const IntSize& size)
 {
     if (m_size == size)
         return;
     m_size = size;
     m_tiles.clear();
+    m_missingSince.clear();
+    m_placeholderShown.clear();
+    m_fadeStart.clear();
+    m_cellSize = { };
+}
+
+// The web process tiles layers in a fixed grid (WCTileGrid, 512 CSS pixels scaled to the backing
+// store). A tile's index times the cell size is its origin: learn the cell size from a tile that is
+// not in the first row or column. Until then, the largest tile is a lower bound.
+IntSize TextureMapperSparseBackingStore::cellSize()
+{
+    if (!m_cellSize.isEmpty())
+        return m_cellSize;
+    IntSize size;
+    IntSize largest;
+    for (auto& iterator : m_tiles) {
+        auto rect = enclosingIntRect(iterator.value->rect());
+        if (iterator.key.x() > 0 && !size.width())
+            size.setWidth(rect.x() / iterator.key.x());
+        if (iterator.key.y() > 0 && !size.height())
+            size.setHeight(rect.y() / iterator.key.y());
+        largest = largest.expandedTo(rect.size());
+    }
+    if (size.width() > 0 && size.height() > 0)
+        return m_cellSize = size;
+    return { size.width() > 0 ? size.width() : largest.width(), size.height() > 0 ? size.height() : largest.height() };
+}
+
+void TextureMapperSparseBackingStore::willAddTile(const TileIndex& index)
+{
+    if (m_tiles.contains(index))
+        return;
+    m_missingSince.remove(index);
+    if (m_placeholderShown.remove(index))
+        m_fadeStart.set(index, MonotonicTime::now());
+}
+
+void TextureMapperSparseBackingStore::paintPlaceholders(TextureMapper& textureMapper, const TransformationMatrix& transform, float opacity, MonotonicTime now)
+{
+    IntRect layerRect = { { }, m_size };
+    auto inverse = transform.inverse();
+    auto cell = cellSize();
+    if (!inverse || layerRect.isEmpty() || cell.width() <= 0 || cell.height() <= 0) {
+        m_missingSince.clear();
+        return;
+    }
+    FloatRect visible = inverse->mapQuad(FloatQuad(FloatRect(textureMapper.clipBounds()))).boundingBox();
+    visible.intersect(layerRect);
+    if (visible.isEmpty()) {
+        m_missingSince.clear();
+        return;
+    }
+    int x0 = static_cast<int>(visible.x()) / cell.width();
+    int y0 = static_cast<int>(visible.y()) / cell.height();
+    int x1 = (static_cast<int>(std::ceil(visible.maxX())) + cell.width() - 1) / cell.width();
+    int y1 = (static_cast<int>(std::ceil(visible.maxY())) + cell.height() - 1) / cell.height();
+    if ((x1 - x0) * (y1 - y0) > 400)
+        return; // a huge transformed layer; not worth it
+
+    HashMap<TileIndex, MonotonicTime> missing;
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            TileIndex index { x, y };
+            if (m_tiles.contains(index))
+                continue;
+            IntRect cellRect = intersection(layerRect, { x * cell.width(), y * cell.height(), cell.width(), cell.height() });
+            if (cellRect.isEmpty())
+                continue;
+            auto iterator = m_missingSince.find(index);
+            MonotonicTime since = iterator != m_missingSince.end() ? iterator->value : now;
+            missing.add(index, since);
+            Seconds missingFor = now - since;
+            if (missingFor < placeholderShowDelay) {
+                requestAnimationFrame(placeholderShowDelay - missingFor);
+                continue;
+            }
+            m_placeholderShown.add(index);
+            float appear = std::min(1.0, (missingFor - placeholderShowDelay) / placeholderAppear);
+            drawPlaceholder(textureMapper, cellRect, transform, opacity * appear, now);
+            if (missingFor < placeholderPulseLimit)
+                requestAnimationFrame(appear < 1 ? fadeFrameInterval : pulseFrameInterval);
+        }
+    }
+    m_missingSince = WTF::move(missing);
 }
 
 TransformationMatrix TextureMapperSparseBackingStore::adjustedTransformForRect(const FloatRect& targetRect)
@@ -58,8 +176,24 @@ void TextureMapperSparseBackingStore::paintToTextureMapper(TextureMapper& textur
 {
     IntRect rect = { { }, m_size };
     TransformationMatrix adjustedTransform = transform * adjustedTransformForRect(targetRect);
-    for (auto& iterator : m_tiles)
-        iterator.value->paint(textureMapper, adjustedTransform, opacity, allTileEdgesExposed(rect, iterator.value->rect()));
+    auto now = MonotonicTime::now();
+    for (auto& iterator : m_tiles) {
+        float fade = 1;
+        auto fadeIterator = m_fadeStart.find(iterator.key);
+        if (fadeIterator != m_fadeStart.end()) {
+            fade = std::clamp<float>((now - fadeIterator->value) / tileFadeDuration, 0, 1);
+            if (fade >= 1)
+                m_fadeStart.remove(fadeIterator);
+            else {
+                // Ease out; the placeholder fades out underneath.
+                fade = 1 - (1 - fade) * (1 - fade);
+                drawPlaceholder(textureMapper, iterator.value->rect(), adjustedTransform, opacity * (1 - fade), now);
+                requestAnimationFrame(fadeFrameInterval);
+            }
+        }
+        iterator.value->paint(textureMapper, adjustedTransform, opacity * fade, allTileEdgesExposed(rect, iterator.value->rect()));
+    }
+    paintPlaceholders(textureMapper, adjustedTransform, opacity, now);
 }
 
 void TextureMapperSparseBackingStore::drawBorder(TextureMapper& textureMapper, const Color& borderColor, float borderWidth, const FloatRect& targetRect, const TransformationMatrix& transform)
@@ -105,17 +239,21 @@ static TextureMapperTile& ensureTileForUpdate(HashMap<TextureMapperSparseBacking
 
 void TextureMapperSparseBackingStore::updateContents(const TileIndex& index, NativeImage& image, const IntRect& dirtyRect)
 {
+    willAddTile(index);
     ensureTileForUpdate(m_tiles, index, dirtyRect).updateContents(image, dirtyRect);
 }
 
 void TextureMapperSparseBackingStore::updateContentsFromTexture(const TileIndex& index, unsigned textureID, const IntRect& dirtyRect)
 {
+    willAddTile(index);
     ensureTileForUpdate(m_tiles, index, dirtyRect).updateContentsFromTexture(textureID, dirtyRect);
 }
 
 void TextureMapperSparseBackingStore::removeTile(const TileIndex& index)
 {
     m_tiles.remove(index);
+    m_fadeStart.remove(index);
+    m_placeholderShown.remove(index);
 }
 
 } // namespace WebCore

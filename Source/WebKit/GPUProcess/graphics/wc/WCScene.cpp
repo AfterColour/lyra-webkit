@@ -46,6 +46,7 @@
 #include <WebCore/TextureMapperPlatformLayer.h>
 #include <WebCore/TextureMapperSparseBackingStore.h>
 #include <WebCore/MediaTraceWin.h>
+#include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -359,6 +360,10 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
     m_needsRecomposite = false; // this frame shows the newest video frames and scroll positions
     m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, surface);
     rootLayer->paint(*m_textureMapper);
+    if (!m_usesOffscreenRendering && !update.remoteContextHostedIdentifier)
+        scheduleAnimationFrameIfNeeded();
+    else
+        WebCore::TextureMapperSparseBackingStore::takeAnimationFrameDelay();
     if (showFPS)
         m_fpsCounter.updateFPSAndDisplay(*m_textureMapper);
     if (readPixel) {
@@ -424,6 +429,25 @@ void WCScene::applyScrollingLayerUpdates(uint64_t sequence, Vector<WCScrollingLa
     requestRecomposite();
 }
 
+// Lyra: placeholders for unpainted tiles pulse and new tiles fade in (TextureMapperSparseBackingStore);
+// paint the scene again while they animate.
+void WCScene::scheduleAnimationFrameIfNeeded()
+{
+    auto delay = WebCore::TextureMapperSparseBackingStore::takeAnimationFrameDelay();
+    if (!delay || m_animationFrameScheduled)
+        return;
+    m_animationFrameScheduled = true;
+    RunLoop::mainSingleton().dispatchAfter(delay, [sceneID = m_sceneID] {
+        remoteGraphicsStreamWorkQueue().dispatch([sceneID] {
+            auto* scene = liveScenes().get(sceneID);
+            if (!scene)
+                return;
+            scene->m_animationFrameScheduled = false;
+            scene->requestRecomposite();
+        });
+    });
+}
+
 bool WCScene::requestRecomposite()
 {
     if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper)
@@ -468,6 +492,7 @@ bool WCScene::recomposite()
     clearToBackground();
     m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, nullptr);
     root->texmapLayer.paint(*m_textureMapper);
+    scheduleAnimationFrameIfNeeded();
     m_fpsCounter.updateFPSAndDisplay(*m_textureMapper);
     m_textureMapper->endPainting();
     m_context->swapBuffers();

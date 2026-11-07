@@ -33,6 +33,9 @@
 #include "TextureMapperBackingStore.h"
 #include "TextureMapperTile.h"
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <wtf/MonotonicTime.h>
+#include <wtf/Seconds.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -50,11 +53,24 @@ public:
     WEBCORE_EXPORT void updateContentsFromTexture(const TileIndex&, unsigned textureID, const IntRect& dirtyRect);
     WEBCORE_EXPORT void removeTile(const TileIndex&);
 
+    // Lyra: tiles the web process has not painted yet (a fast scroll outran it) show a softly
+    // pulsing placeholder, and a tile that arrives where a placeholder was shown fades in. After
+    // painting a scene, this returns how soon it should be painted again to animate them (zero
+    // when nothing animates), and resets it.
+    WEBCORE_EXPORT static Seconds takeAnimationFrameDelay();
+
 private:
     TransformationMatrix adjustedTransformForRect(const FloatRect&);
+    void willAddTile(const TileIndex&);
+    IntSize cellSize();
+    void paintPlaceholders(TextureMapper&, const TransformationMatrix&, float opacity, MonotonicTime);
 
     IntSize m_size;
     HashMap<TileIndex, std::unique_ptr<TextureMapperTile>> m_tiles;
+    HashMap<TileIndex, MonotonicTime> m_missingSince; // visible cells without a tile
+    HashSet<TileIndex> m_placeholderShown;
+    HashMap<TileIndex, MonotonicTime> m_fadeStart;
+    IntSize m_cellSize;
 };
 
 } // namespace WebCore

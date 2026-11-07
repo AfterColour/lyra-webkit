@@ -92,6 +92,8 @@ private:
     bool m_scrollingLayersChanged { false };
     bool m_needsRecomposite { false };
     bool m_recompositeScheduled { false };
+    bool m_animationFrameScheduled { false };
+    void scheduleAnimationFrameIfNeeded();
     uint64_t m_sceneID { 0 };
     WebCore::Color m_backgroundColor { WebCore::Color::white };
     void clearToBackground();

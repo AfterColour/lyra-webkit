@@ -29,6 +29,8 @@
 #if USE(GRAPHICS_LAYER_WC)
 
 #include "RemoteGraphicsContextGL.h"
+#include "RemoteWCLayerTreeHost.h"
+#include "StreamConnectionWorkQueue.h"
 #include "WCContentBuffer.h"
 #include "WCContentBufferManager.h"
 #include "WCRemoteFrameHostLayerManager.h"
@@ -74,7 +76,7 @@ public:
 
     bool contentBufferNeedsDisplay() override
     {
-        return scene.recomposite();
+        return scene.requestRecomposite();
     }
 
     WCScene& scene;
@@ -92,8 +94,19 @@ public:
     WebCore::FloatPoint boundsOrigin;
 };
 
+// Scenes alive on the scene thread, for recomposites dispatched to it (a scene is destroyed by a
+// task on the same thread, possibly queued ahead of the recomposite).
+static HashMap<uint64_t, WCScene*>& liveScenes()
+{
+    static NeverDestroyed<HashMap<uint64_t, WCScene*>> scenes;
+    return scenes;
+}
+
 void WCScene::initialize(WCSceneContext& context)
 {
+    static uint64_t lastSceneID;
+    m_sceneID = ++lastSceneID;
+    liveScenes().add(m_sceneID, this);
     // The creation of the TextureMapper needs an active OpenGL context.
     m_context = &context;
     if (!m_context->makeContextCurrent())
@@ -109,6 +122,8 @@ WCScene::WCScene(WebCore::ProcessIdentifier webProcessIdentifier, bool usesOffsc
 
 WCScene::~WCScene()
 {
+    if (m_sceneID)
+        liveScenes().remove(m_sceneID);
     if (!m_context->makeContextCurrent())
         return;
     m_textureMapper = nullptr;
@@ -341,6 +356,7 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
         }
     }
 
+    m_needsRecomposite = false; // this frame shows the newest video frames and scroll positions
     m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, surface);
     rootLayer->paint(*m_textureMapper);
     if (showFPS)
@@ -405,8 +421,28 @@ void WCScene::applyScrollingLayerUpdates(uint64_t sequence, Vector<WCScrollingLa
         return;
     if (!std::exchange(m_scrollingLayersChanged, false))
         return;
-    MEDIA_TRACE_TIME("GPU: scrolling recomposite");
-    recomposite();
+    requestRecomposite();
+}
+
+bool WCScene::requestRecomposite()
+{
+    if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper)
+        return false;
+    m_needsRecomposite = true;
+    if (m_recompositeScheduled)
+        return true;
+    m_recompositeScheduled = true;
+    remoteGraphicsStreamWorkQueue().dispatch([sceneID = m_sceneID] {
+        auto* scene = liveScenes().get(sceneID);
+        if (!scene)
+            return;
+        scene->m_recompositeScheduled = false;
+        if (!std::exchange(scene->m_needsRecomposite, false))
+            return;
+        MEDIA_TRACE_TIME("GPU: coalesced recomposite");
+        scene->recomposite();
+    });
+    return true;
 }
 
 // Lyra: the window's buffers keep earlier frames. Where no layer paints (tiles the main thread

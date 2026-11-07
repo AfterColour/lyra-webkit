@@ -61,6 +61,14 @@ public:
     // layer tree update from the web process (the D3D11 video layer). On-screen scenes only.
     bool recomposite();
 
+    // Lyra: asks for the scene to be painted again soon, after whatever else is queued for the
+    // scene's thread. Video frames, scrolling-thread moves and layer tree updates each painted and
+    // presented a frame of their own: on a page with a playing video that was more frames than the
+    // display shows, and presenting them queued up behind each other (uneven motion while
+    // scrolling). Requests that arrive while one is pending, and a pending one when a layer tree
+    // update paints first, now make a single frame. Returns false if the scene cannot be painted.
+    bool requestRecomposite();
+
     // Lyra: layers moved by the scrolling thread of the web process. willApply... on the thread
     // that receives the message, apply... on the scene's thread; the scene is painted again once
     // the last of the queued batches is applied.
@@ -82,6 +90,9 @@ private:
     bool m_canRecomposite { false };
     std::atomic<unsigned> m_pendingScrollingLayerUpdates { 0 };
     bool m_scrollingLayersChanged { false };
+    bool m_needsRecomposite { false };
+    bool m_recompositeScheduled { false };
+    uint64_t m_sceneID { 0 };
     WebCore::Color m_backgroundColor { WebCore::Color::white };
     void clearToBackground();
 

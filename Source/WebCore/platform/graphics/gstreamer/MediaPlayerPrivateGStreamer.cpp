@@ -3836,16 +3836,23 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
             const char* description = "d3d11convert ! capsfilter caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\" ! d3d11download";
 #if USE(GRAPHICS_LAYER_WC)
             if (m_d3d11VideoLayer)
-                description = "d3d11convert name=lyraconvert ! capsfilter name=lyrascale caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\"";
+                // Lyra: two optional halving steps before the final scale. One bilinear pass from a
+                // 4K frame down to a ~1800 px player skips source pixels (aliasing, lost detail);
+                // halving first averages them. Unused steps pass the frames through.
+                description = "d3d11convert name=lyrahalve0 ! capsfilter name=lyrahalvecaps0 caps=\"video/x-raw(memory:D3D11Memory)\" ! "
+                    "d3d11convert name=lyrahalve1 ! capsfilter name=lyrahalvecaps1 caps=\"video/x-raw(memory:D3D11Memory)\" ! "
+                    "d3d11convert name=lyraconvert ! capsfilter name=lyrascale caps=\"video/x-raw(memory:D3D11Memory),format=BGRA\"";
 #endif
             GstElement* filter = gst_parse_bin_from_description(description, TRUE, &error.outPtr());
             if (filter) {
 #if USE(GRAPHICS_LAYER_WC)
                 if (m_d3d11VideoLayer) {
                     m_d3d11ScaleCapsfilter = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyrascale"));
+                    m_d3d11HalveCapsfilters[0] = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyrahalvecaps0"));
+                    m_d3d11HalveCapsfilters[1] = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyrahalvecaps1"));
                     // The page must keep seeing the video's own size: take it from the decoder
                     // output (d3d11convert's input), not from the scaled frames the sink gets.
-                    if (GRefPtr convert = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyraconvert"))) {
+                    if (GRefPtr convert = adoptGRef(gst_bin_get_by_name(GST_BIN(filter), "lyrahalve0"))) {
                         GRefPtr pad = adoptGRef(gst_element_get_static_pad(convert.get(), "sink"));
                         m_d3d11ConvertSinkPad = pad;
                         g_signal_connect(pad.get(), "notify::caps", G_CALLBACK(+[](GstPad* pad, GParamSpec*, MediaPlayerPrivateGStreamer* player) {
@@ -4623,7 +4630,31 @@ void MediaPlayerPrivateGStreamer::updateD3D11VideoScaling()
     if (target.width() < 16 || target.height() < 16)
         return;
     // Ignore jitter of a few pixels (layout rounding, animations) to avoid needless renegotiation.
-    if (!m_d3d11ScaleTarget.isEmpty() && std::abs(target.width() - m_d3d11ScaleTarget.width()) <= 2 && std::abs(target.height() - m_d3d11ScaleTarget.height()) <= 2)
+    bool jitter = !m_d3d11ScaleTarget.isEmpty() && std::abs(target.width() - m_d3d11ScaleTarget.width()) <= 2 && std::abs(target.height() - m_d3d11ScaleTarget.height()) <= 2;
+    if (jitter)
+        target = m_d3d11ScaleTarget;
+
+    // Halve while the remaining step would still shrink by more than 2x.
+    IntSize source { static_cast<int>(m_videoSize.width()), static_cast<int>(m_videoSize.height()) };
+    for (unsigned i = 0; i < 2; ++i) {
+        IntSize halved;
+        if (source.width() > 2 * target.width() && source.height() > 2 * target.height()) {
+            halved = { (source.width() / 2) & ~1, (source.height() / 2) & ~1 };
+            source = halved;
+        }
+        if (!m_d3d11HalveCapsfilters[i] || halved == m_d3d11HalveSizes[i])
+            continue;
+        m_d3d11HalveSizes[i] = halved;
+        GRefPtr<GstCaps> halveCaps = adoptGRef(halved.isEmpty()
+            ? gst_caps_new_empty_simple("video/x-raw")
+            : gst_caps_new_simple("video/x-raw", "width", G_TYPE_INT, halved.width(), "height", G_TYPE_INT, halved.height(),
+                "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, nullptr));
+        gst_caps_set_features(halveCaps.get(), 0, gst_caps_features_new("memory:D3D11Memory", nullptr));
+        g_object_set(m_d3d11HalveCapsfilters[i].get(), "caps", halveCaps.get(), nullptr);
+        MEDIA_TRACE("halving step %u: %dx%d", i, halved.width(), halved.height());
+    }
+
+    if (jitter)
         return;
     m_d3d11ScaleTarget = target;
 

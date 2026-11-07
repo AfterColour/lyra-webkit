@@ -475,6 +475,8 @@ protected:
     void updateD3D11VideoScaling();
     void decoderOutputCapsChanged(GstPad*);
     GRefPtr<GstElement> m_d3d11ScaleCapsfilter;
+    GRefPtr<GstElement> m_d3d11HalveCapsfilters[2]; // Lyra: downscaling in steps of at most 2x
+    IntSize m_d3d11HalveSizes[2];
     GRefPtr<GstPad> m_d3d11ConvertSinkPad;
     IntSize m_d3d11ScaleTarget;
 #endif

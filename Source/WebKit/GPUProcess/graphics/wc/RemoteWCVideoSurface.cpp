@@ -229,7 +229,22 @@ void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, co
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     imageTargetTexture2D(GL_TEXTURE_2D, slot.eglImage);
-    textureMapper.drawTexture(texture, { }, targetRect, matrix, opacity);
+    // Lyra: the frames are scaled for the player's size on the device already (MediaPlayerPrivate-
+    // GStreamer::updateD3D11VideoScaling, which rounds to even sizes and ignores a few pixels of
+    // jitter). Resampling them again by a fraction of a pixel, or at a position between device
+    // pixels, blurs the whole picture: draw them pixel for pixel when they are that close.
+    FloatRect drawRect = targetRect;
+    if (matrix.isAffine() && !matrix.b() && !matrix.c() && matrix.a() > 0 && matrix.d() > 0) {
+        FloatRect device = matrix.mapRect(targetRect);
+        float width = m_width;
+        float height = m_height;
+        if (std::abs(device.width() - width) <= 3 && std::abs(device.height() - height) <= 3) {
+            FloatRect snapped { std::round(device.x() + (device.width() - width) / 2), std::round(device.y() + (device.height() - height) / 2), width, height };
+            if (auto inverse = matrix.inverse())
+                drawRect = inverse->mapRect(snapped);
+        }
+    }
+    textureMapper.drawTexture(texture, { }, drawRect, matrix, opacity);
     glBindTexture(GL_TEXTURE_2D, 0);
     glDeleteTextures(1, &texture);
 }

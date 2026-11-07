@@ -39,6 +39,11 @@ public:
     // showing them, which then registers as their TextureMapperPlatformLayer::Client.
     virtual bool notifiesContentsChanged() const { return false; }
 
+    // Lyra: a GraphicsLayerWC started showing this layer but has no content buffer identifier to
+    // send (an earlier GraphicsLayerWC used it up: the video moved into a new layer on entering or
+    // leaving fullscreen or theater mode). Layers that produce frames on their own get one again.
+    virtual void didAttachWithoutContentBuffer() { }
+
     Vector<WCContentBufferIdentifier> takeContentBufferIdentifiers()
     {
         return std::exchange(m_contentBufferIdentifiers, { });

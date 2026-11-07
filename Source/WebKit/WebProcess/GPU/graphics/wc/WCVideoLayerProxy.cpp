@@ -58,6 +58,7 @@ WCVideoLayerProxy::WCVideoLayerProxy(Ref<IPC::Connection>&& connection, int64_t 
     : m_identifier(nextIdentifier())
     , m_connection(WTF::move(connection))
     , m_adapterLUID(adapterLUID)
+    , m_layer(*this)
 {
     ASSERT(isMainThread());
     m_connection->send(Messages::GPUConnectionToWebProcess::CreateWCVideoSurface(m_identifier), 0);
@@ -81,6 +82,7 @@ bool WCVideoLayerProxy::ensureTextures(ID3D11Device* device, DXGI_FORMAT format,
     m_width = width;
     m_height = height;
     m_nextSlot = 0;
+    m_lastPresentedSlot = std::nullopt;
 
     D3D11_TEXTURE2D_DESC desc { };
     desc.Width = width;
@@ -172,6 +174,7 @@ bool WCVideoLayerProxy::pushFrame(ID3D11Texture2D* source, unsigned subresource,
     context->CopySubresourceRegion(slot.texture.Get(), 0, 0, 0, 0, source, subresource, &box);
     slot.mutex->ReleaseSync(1);
     m_nextSlot = (slotIndex + 1) % textureCount;
+    m_lastPresentedSlot = slotIndex;
 
     m_connection->sendWithAsyncReply(Messages::GPUConnectionToWebProcess::PresentWCVideoSurface(m_identifier, slotIndex),
         [protectedThis = Ref { *this }](std::optional<WCContentBufferIdentifier> identifier, bool succeeded) {
@@ -179,6 +182,34 @@ bool WCVideoLayerProxy::pushFrame(ID3D11Texture2D* source, unsigned subresource,
             protectedThis->didPresent(identifier, succeeded);
         }, 0);
     return true;
+}
+
+// Lyra: the layer showing the video was replaced (fullscreen, theater mode) while no new frames come
+// (a paused video): present the last frame again, so that the GPU process hands out a content buffer
+// identifier for the new layer. It does only once the old layer let go of the video, in the layer
+// tree update that goes out after the GPU process painted this frame's tiles: until then it answers
+// without one, so try again a few times.
+void WCVideoLayerProxy::presentLastFrameAgain(unsigned attemptsLeft)
+{
+    ASSERT(isMainThread());
+    RunLoop::mainSingleton().dispatchAfter(40_ms, [protectedThis = Ref { *this }, attemptsLeft] {
+        unsigned slot;
+        {
+            Locker locker { protectedThis->m_lock };
+            if (protectedThis->m_failed || !protectedThis->m_lastPresentedSlot)
+                return;
+            slot = *protectedThis->m_lastPresentedSlot;
+        }
+        protectedThis->m_connection->sendWithAsyncReply(Messages::GPUConnectionToWebProcess::PresentWCVideoSurface(protectedThis->m_identifier, slot),
+            [protectedThis, attemptsLeft](std::optional<WCContentBufferIdentifier> identifier, bool succeeded) {
+                if (succeeded && !identifier && attemptsLeft > 1) {
+                    protectedThis->presentLastFrameAgain(attemptsLeft - 1);
+                    return;
+                }
+                MEDIA_TRACE("presented the last frame again for a new layer: %s", identifier ? "attached" : "no identifier");
+                protectedThis->didPresent(identifier, succeeded);
+            }, 0);
+    });
 }
 
 void WCVideoLayerProxy::setFailureHandler(Function<void()>&& handler)

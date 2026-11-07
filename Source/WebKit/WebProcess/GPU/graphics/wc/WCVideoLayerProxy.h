@@ -54,7 +54,12 @@ private:
 
     class Layer final : public WCPlatformLayerGCGL {
     public:
+        explicit Layer(WCVideoLayerProxy& proxy)
+            : m_proxy(proxy)
+        {
+        }
         bool notifiesContentsChanged() const final { return true; }
+        void didAttachWithoutContentBuffer() final { m_proxy.presentLastFrameAgain(); }
         ~Layer()
         {
             if (client())
@@ -66,7 +71,11 @@ private:
             if (client())
                 client()->setPlatformLayerNeedsDisplay();
         }
+    private:
+        WCVideoLayerProxy& m_proxy;
     };
+
+    void presentLastFrameAgain(unsigned attemptsLeft = 8); // Main thread.
 
     bool ensureTextures(ID3D11Device*, DXGI_FORMAT, unsigned width, unsigned height) WTF_REQUIRES_LOCK(m_lock);
     void didPresent(std::optional<WCContentBufferIdentifier>, bool succeeded);
@@ -94,6 +103,7 @@ private:
     };
     std::array<Slot, textureCount> m_slots WTF_GUARDED_BY_LOCK(m_lock);
     unsigned m_nextSlot WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    std::optional<unsigned> m_lastPresentedSlot WTF_GUARDED_BY_LOCK(m_lock);
     bool m_failed WTF_GUARDED_BY_LOCK(m_lock) { false };
 };
 

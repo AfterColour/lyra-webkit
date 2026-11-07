@@ -121,6 +121,14 @@ void RemoteWCVideoSurface::setTextures(Vector<Win32Handle>&& handles, unsigned w
 {
     if (m_invalidated)
         return;
+    if (m_currentSlot >= 0 && static_cast<unsigned>(m_currentSlot) < m_slots.size()) {
+        releaseRetainedSlot();
+        // Still acquired (key 1) by us: its contents stay as they are.
+        m_retainedSlot = std::exchange(m_slots[m_currentSlot], { });
+        m_retainedWidth = m_width;
+        m_retainedHeight = m_height;
+        m_currentSlot = -1;
+    }
     releaseTextures();
 
     auto device = angleD3D11Device();
@@ -175,6 +183,7 @@ std::optional<WCContentBufferIdentifier> RemoteWCVideoSurface::present(unsigned 
         if (m_currentSlot >= 0)
             m_slots[m_currentSlot].mutex->ReleaseSync(0);
         m_currentSlot = slot;
+        releaseRetainedSlot();
     }
 
     // Already shown by a WCScene layer: composite right away. Going through the web process instead
@@ -196,11 +205,21 @@ std::optional<WCContentBufferIdentifier> RemoteWCVideoSurface::present(unsigned 
 
 void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, const FloatRect& targetRect, const TransformationMatrix& matrix, float opacity)
 {
-    if (m_currentSlot < 0 || static_cast<unsigned>(m_currentSlot) >= m_slots.size())
+    Slot* current = nullptr;
+    unsigned frameWidth = m_width;
+    unsigned frameHeight = m_height;
+    if (m_currentSlot >= 0 && static_cast<unsigned>(m_currentSlot) < m_slots.size())
+        current = &m_slots[m_currentSlot];
+    else if (m_retainedSlot) {
+        current = &*m_retainedSlot;
+        frameWidth = m_retainedWidth;
+        frameHeight = m_retainedHeight;
+    }
+    if (!current)
         return;
 
     MEDIA_TRACE_TIME("GPU proc: draw video layer");
-    auto& slot = m_slots[m_currentSlot];
+    auto& slot = *current;
     if (!slot.eglImage) {
         if (!createImageKHR())
             return;
@@ -236,8 +255,8 @@ void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, co
     FloatRect drawRect = targetRect;
     if (matrix.isAffine() && !matrix.b() && !matrix.c() && matrix.a() > 0 && matrix.d() > 0) {
         FloatRect device = matrix.mapRect(targetRect);
-        float width = m_width;
-        float height = m_height;
+        float width = frameWidth;
+        float height = frameHeight;
         if (std::abs(device.width() - width) <= 3 && std::abs(device.height() - height) <= 3) {
             FloatRect snapped { std::round(device.x() + (device.width() - width) / 2), std::round(device.y() + (device.height() - height) / 2), width, height };
             if (auto inverse = matrix.inverse())
@@ -247,6 +266,17 @@ void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, co
     textureMapper.drawTexture(texture, { }, drawRect, matrix, opacity);
     glBindTexture(GL_TEXTURE_2D, 0);
     glDeleteTextures(1, &texture);
+}
+
+void RemoteWCVideoSurface::releaseRetainedSlot()
+{
+    if (!m_retainedSlot)
+        return;
+    if (m_retainedSlot->mutex)
+        m_retainedSlot->mutex->ReleaseSync(0);
+    if (m_retainedSlot->eglImage && destroyImageKHR())
+        destroyImageKHR()(compositorEGLDisplay(), m_retainedSlot->eglImage);
+    m_retainedSlot = std::nullopt;
 }
 
 void RemoteWCVideoSurface::releaseTextures()
@@ -266,6 +296,7 @@ void RemoteWCVideoSurface::invalidate()
     if (m_invalidated)
         return;
     m_invalidated = true;
+    releaseRetainedSlot();
     releaseTextures();
     // Detaches the layer from WCScene and WCContentBufferManager.
     if (client())

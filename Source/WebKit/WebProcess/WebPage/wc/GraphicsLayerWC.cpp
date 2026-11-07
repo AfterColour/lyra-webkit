@@ -698,8 +698,12 @@ void GraphicsLayerWC::flushCompositingStateForThisLayerOnly()
     if (update.changes & WCLayerChange::PlatformLayer) {
         update.platformLayer.hasLayer = m_platformLayer;
 #if ENABLE(WEBGL)
-        if (m_platformLayer)
-            update.platformLayer.identifiers = static_cast<WCPlatformLayerGCGL*>(m_platformLayer)->takeContentBufferIdentifiers();
+        if (m_platformLayer) {
+            auto* platformLayer = static_cast<WCPlatformLayerGCGL*>(m_platformLayer);
+            update.platformLayer.identifiers = platformLayer->takeContentBufferIdentifiers();
+            if (update.platformLayer.identifiers.isEmpty() && platformLayer->notifiesContentsChanged())
+                platformLayer->didAttachWithoutContentBuffer();
+        }
 #endif
     }
     if (update.changes & WCLayerChange::RemoteFrame)

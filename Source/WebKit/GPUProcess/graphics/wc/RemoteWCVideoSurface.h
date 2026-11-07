@@ -74,6 +74,7 @@ private:
     void paintToTextureMapper(WebCore::TextureMapper&, const WebCore::FloatRect&, const WebCore::TransformationMatrix&, float opacity) final;
 
     void releaseTextures();
+    void releaseRetainedSlot();
 
     struct Slot {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
@@ -86,6 +87,12 @@ private:
     int m_currentSlot { -1 };
     unsigned m_width { 0 };
     unsigned m_height { 0 };
+    // Lyra: the frame on screen when new textures arrive (the player was resized, e.g. on leaving
+    // fullscreen). A paused video sends no new frame into them, so keep showing this one, scaled,
+    // until one does; the player showed only its background before.
+    std::optional<Slot> m_retainedSlot;
+    unsigned m_retainedWidth { 0 };
+    unsigned m_retainedHeight { 0 };
     bool m_invalidated { false };
     std::atomic<unsigned> m_pendingPresents { 0 };
     std::atomic<bool> m_failed { false };

@@ -68,6 +68,8 @@ public:
     bool deleteCookies(const String& url);
     WEBCORE_EXPORT bool deleteCookiesForHostname(const String& hostname, IncludeHttpOnlyCookies);
     WEBCORE_EXPORT bool deleteAllCookies();
+    // Lyra: cookies set or changed at `since` or later (each set replaces the row: "lastupdated").
+    WEBCORE_EXPORT bool deleteCookiesModifiedSince(WallTime since);
 
     WEBCORE_EXPORT CookieJarDB(const String& databasePath);
     WEBCORE_EXPORT ~CookieJarDB();

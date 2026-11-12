@@ -637,6 +637,19 @@ bool CookieJarDB::deleteAllCookies()
     return executeSQLStatement(m_database.prepareStatement(DELETE_ALL_COOKIE_SQL));
 }
 
+bool CookieJarDB::deleteCookiesModifiedSince(WallTime since)
+{
+    if (!isEnabled() || !m_database.isOpen())
+        return false;
+
+    // "lastupdated" is CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS", UTC), which compares as text.
+    auto statement = m_database.prepareStatement("DELETE FROM Cookie WHERE lastupdated >= datetime(?, 'unixepoch');"_s);
+    if (!statement)
+        return false;
+    statement->bindInt64(1, static_cast<int64_t>(since.secondsSinceEpoch().seconds()));
+    return executeSQLStatement(WTF::move(statement));
+}
+
 void CookieJarDB::createPrepareStatement(ASCIILiteral sql)
 {
     auto statement = m_database.prepareStatement(sql);

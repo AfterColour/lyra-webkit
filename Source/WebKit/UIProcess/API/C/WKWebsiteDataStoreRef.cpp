@@ -631,6 +631,31 @@ void WKWebsiteDataStoreRemoveAllIndexedDatabases(WKWebsiteDataStoreRef dataStore
     });
 }
 
+void WKWebsiteDataStoreRemoveDataModifiedSince(WKWebsiteDataStoreRef dataStoreRef, WKWebsiteDataKinds kinds, double sinceSeconds, void* context, WKWebsiteDataStoreRemoveDataModifiedSinceCallback callback)
+{
+    using WebKit::WebsiteDataType;
+    OptionSet<WebsiteDataType> dataTypes;
+    if (kinds & kWKWebsiteDataCookiesAndSiteData) {
+        dataTypes.add({ WebsiteDataType::Cookies, WebsiteDataType::SessionStorage, WebsiteDataType::LocalStorage,
+            WebsiteDataType::WebSQLDatabases, WebsiteDataType::IndexedDBDatabases, WebsiteDataType::MediaKeys,
+            WebsiteDataType::ServiceWorkerRegistrations, WebsiteDataType::DOMCache, WebsiteDataType::FileSystem,
+            WebsiteDataType::BackgroundFetchStorage, WebsiteDataType::ResourceLoadStatistics, WebsiteDataType::Credentials,
+            WebsiteDataType::DeviceIdHashSalt, WebsiteDataType::PrivateClickMeasurements });
+    }
+    if (kinds & kWKWebsiteDataCaches)
+        dataTypes.add({ WebsiteDataType::DiskCache, WebsiteDataType::MemoryCache });
+    if (dataTypes.isEmpty()) {
+        if (callback)
+            callback(context);
+        return;
+    }
+    WallTime since = sinceSeconds > 0 ? WallTime::fromRawSeconds(sinceSeconds) : -WallTime::infinity();
+    protect(WebKit::toImpl(dataStoreRef))->removeData(dataTypes, since, [context, callback] {
+        if (callback)
+            callback(context);
+    });
+}
+
 void WKWebsiteDataStoreRemoveLocalStorage(WKWebsiteDataStoreRef dataStoreRef, void* context, WKWebsiteDataStoreRemoveLocalStorageCallback callback)
 {
     OptionSet<WebKit::WebsiteDataType> dataTypes = WebKit::WebsiteDataType::LocalStorage;

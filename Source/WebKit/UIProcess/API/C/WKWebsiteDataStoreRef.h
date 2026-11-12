@@ -186,6 +186,18 @@ typedef void (*WKWebsiteDataStoreGetFetchCacheOriginsFunction)(WKArrayRef, void*
 WK_EXPORT void WKWebsiteDataStoreGetFetchCacheOrigins(WKWebsiteDataStoreRef dataStoreRef, void* context, WKWebsiteDataStoreGetFetchCacheOriginsFunction function);
 
 typedef void (*WKWebsiteDataStoreRemoveLocalStorageCallback)(void* functionContext);
+// Lyra: removes website data of the given kinds that was stored or changed at `sinceSeconds` (Unix
+// time) or later; 0 removes all of it. Cookies and site data: cookies, local and session storage,
+// IndexedDB, service workers and their caches, file system, media keys, statistics and
+// credentials. Caches: the disk and memory caches.
+enum {
+    kWKWebsiteDataCookiesAndSiteData = 1 << 0,
+    kWKWebsiteDataCaches = 1 << 1,
+};
+typedef uint32_t WKWebsiteDataKinds;
+typedef void (*WKWebsiteDataStoreRemoveDataModifiedSinceCallback)(void* functionContext);
+WK_EXPORT void WKWebsiteDataStoreRemoveDataModifiedSince(WKWebsiteDataStoreRef dataStoreRef, WKWebsiteDataKinds kinds, double sinceSeconds, void* context, WKWebsiteDataStoreRemoveDataModifiedSinceCallback callback);
+
 WK_EXPORT void WKWebsiteDataStoreRemoveLocalStorage(WKWebsiteDataStoreRef dataStoreRef, void* context, WKWebsiteDataStoreRemoveLocalStorageCallback callback);
 
 typedef void (*WKWebsiteDataStoreGetFetchCacheSizeForOriginFunction)(uint64_t, void*);

@@ -199,9 +199,13 @@ void NetworkStorageSession::deleteAllCookies(CompletionHandler<void()>&& complet
     completionHandler();
 }
 
-void NetworkStorageSession::deleteAllCookiesModifiedSince(WallTime, CompletionHandler<void()>&& completionHandler)
+void NetworkStorageSession::deleteAllCookiesModifiedSince(WallTime since, CompletionHandler<void()>&& completionHandler)
 {
-    // FIXME: Not yet implemented
+    // Lyra: was not implemented (nothing was deleted). "Since the beginning" deletes every cookie.
+    if (!(since.secondsSinceEpoch().seconds() > 0))
+        cookieDatabase().deleteAllCookies();
+    else
+        cookieDatabase().deleteCookiesModifiedSince(since);
     completionHandler();
 }
 

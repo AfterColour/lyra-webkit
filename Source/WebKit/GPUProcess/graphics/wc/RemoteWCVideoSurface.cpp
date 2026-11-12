@@ -191,6 +191,9 @@ std::optional<WCContentBufferIdentifier> RemoteWCVideoSurface::present(unsigned 
     // (identifier -> layer flush -> scene update) costs a main-thread round trip per frame and caps
     // the video at ~40 fps with uneven pacing.
     if (auto* contentBuffer = static_cast<WCContentBuffer*>(client())) {
+        // Lyra: shown in the picture-in-picture window; the page shows a placeholder instead.
+        if (m_pictureInPicture)
+            return std::nullopt;
         if (!isLatestFrame)
             return std::nullopt; // A newer frame is already queued; composite that one.
         MEDIA_TRACE_TIME("GPU proc: recomposite for video");
@@ -206,6 +209,8 @@ std::optional<WCContentBufferIdentifier> RemoteWCVideoSurface::present(unsigned 
 
 void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, const FloatRect& targetRect, const TransformationMatrix& matrix, float opacity)
 {
+    if (m_pictureInPicture)
+        return; // Lyra: in the picture-in-picture window instead (the page covers this with a placeholder)
     Slot* current = nullptr;
     unsigned frameWidth = m_width;
     unsigned frameHeight = m_height;
@@ -447,6 +452,9 @@ void RemoteWCVideoSurface::releasePictureInPicture()
     eglDestroyContext(display, m_pictureInPicture->context);
     eglDestroySurface(display, m_pictureInPicture->surface);
     m_pictureInPicture = nullptr;
+    // Back in the page: draw the current frame there again right away (a paused video sends none).
+    if (auto* contentBuffer = static_cast<WCContentBuffer*>(client()); contentBuffer && !m_invalidated)
+        contentBuffer->compositeForNewContents();
     MEDIA_TRACE("stopped drawing into the picture-in-picture window");
 }
 

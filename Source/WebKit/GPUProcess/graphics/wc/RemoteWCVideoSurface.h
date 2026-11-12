@@ -32,6 +32,11 @@
 struct ID3D11Texture2D;
 struct IDXGIKeyedMutex;
 
+namespace WebCore {
+class GLContext;
+class TextureMapper;
+}
+
 namespace WebKit {
 
 // GPU process half of the D3D11 video layer (the web process half is WCVideoLayerProxy).
@@ -60,6 +65,8 @@ public:
     void willPresent() { ++m_pendingPresents; }
     std::optional<WCContentBufferIdentifier> present(unsigned slot);
     void invalidate();
+    // Lyra: also draw the frames into `window` (picture-in-picture; 0: stop). See WKPageSetVideoPictureInPictureWindow.
+    void setPictureInPictureWindow(uint64_t window, bool redraw);
 
     // Set when the textures cannot be used here; the web process then paints in software.
     bool hasFailed() const { return m_failed; }
@@ -75,6 +82,11 @@ private:
 
     void releaseTextures();
     void releaseRetainedSlot();
+    struct Slot;
+    bool currentFrame(Slot*&, unsigned& width, unsigned& height);
+    bool ensureEGLImage(Slot&);
+    void drawPictureInPicture();
+    void releasePictureInPicture();
 
     struct Slot {
         Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
@@ -91,6 +103,15 @@ private:
     // fullscreen). A paused video sends no new frame into them, so keep showing this one, scaled,
     // until one does; the player showed only its background before.
     std::optional<Slot> m_retainedSlot;
+    // Its own EGL surface and context, used with raw EGL: switching WebCore::GLContexts behind the
+    // compositor's back leaves GLContext's idea of the current context wrong.
+    struct PictureInPicture {
+        HWND window { nullptr };
+        void* surface { nullptr };           // EGLSurface
+        void* context { nullptr };           // EGLContext
+        std::unique_ptr<WebCore::TextureMapper> textureMapper;
+    };
+    std::unique_ptr<PictureInPicture> m_pictureInPicture;
     unsigned m_retainedWidth { 0 };
     unsigned m_retainedHeight { 0 };
     bool m_invalidated { false };

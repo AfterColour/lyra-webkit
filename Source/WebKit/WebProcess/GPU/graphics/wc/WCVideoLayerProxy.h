@@ -48,6 +48,7 @@ public:
     bool pushFrame(ID3D11Texture2D*, unsigned subresource, unsigned width, unsigned height) final;
     void setFailureHandler(Function<void()>&&) final;
     int64_t adapterLUID() const final { return m_adapterLUID; }
+    void setPictureInPictureWindow(uint64_t window, bool redraw) final;
 
 private:
     WCVideoLayerProxy(Ref<IPC::Connection>&&, int64_t adapterLUID);

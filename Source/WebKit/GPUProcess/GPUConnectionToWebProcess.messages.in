@@ -73,6 +73,7 @@ messages -> GPUConnectionToWebProcess WantsDispatchMessage {
     SetWCVideoSurfaceTextures(uint64_t identifier, Vector<WTF::Win32Handle> textures, uint32_t width, uint32_t height)
     PresentWCVideoSurface(uint64_t identifier, uint32_t slot) -> (std::optional<WebKit::WCContentBufferIdentifier> contentBuffer, bool succeeded)
     ReleaseWCVideoSurface(uint64_t identifier)
+    SetWCVideoSurfacePictureInPictureWindow(uint64_t identifier, uint64_t window, bool redraw)
 #endif
 #endif
 #if ENABLE(VIDEO)

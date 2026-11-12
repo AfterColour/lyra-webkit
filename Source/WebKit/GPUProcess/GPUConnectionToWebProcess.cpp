@@ -585,6 +585,16 @@ void GPUConnectionToWebProcess::presentWCVideoSurface(uint64_t identifier, uint3
     });
 }
 
+void GPUConnectionToWebProcess::setWCVideoSurfacePictureInPictureWindow(uint64_t identifier, uint64_t window, bool redraw)
+{
+    RefPtr surface = m_remoteWCVideoSurfaceMap.get(identifier);
+    if (!surface)
+        return;
+    remoteGraphicsStreamWorkQueue().dispatch([surface = surface.releaseNonNull(), window, redraw] {
+        surface->setPictureInPictureWindow(window, redraw);
+    });
+}
+
 void GPUConnectionToWebProcess::releaseWCVideoSurface(uint64_t identifier)
 {
     RefPtr surface = m_remoteWCVideoSurfaceMap.take(identifier);

@@ -185,6 +185,7 @@ std::optional<WCContentBufferIdentifier> RemoteWCVideoSurface::present(unsigned 
         m_currentSlot = slot;
         releaseRetainedSlot();
     }
+    drawPictureInPicture();
 
     // Already shown by a WCScene layer: composite right away. Going through the web process instead
     // (identifier -> layer flush -> scene update) costs a main-thread round trip per frame and caps
@@ -220,19 +221,8 @@ void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, co
 
     MEDIA_TRACE_TIME("GPU proc: draw video layer");
     auto& slot = *current;
-    if (!slot.eglImage) {
-        if (!createImageKHR())
-            return;
-        const EGLint attributes[] = { EGL_NONE };
-        slot.eglImage = createImageKHR()(compositorEGLDisplay(), EGL_NO_CONTEXT, EGL_D3D11_TEXTURE_ANGLE, reinterpret_cast<EGLClientBuffer>(slot.texture.Get()), attributes);
-        if (slot.eglImage == EGL_NO_IMAGE_KHR)
-            slot.eglImage = nullptr;
-        if (!slot.eglImage) {
-            MEDIA_TRACE("eglCreateImage(EGL_D3D11_TEXTURE_ANGLE) failed: 0x%x", eglGetError());
-            m_failed = true;
-            return;
-        }
-    }
+    if (!ensureEGLImage(slot))
+        return;
 
     static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC imageTargetTexture2D = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(eglGetProcAddress("glEGLImageTargetTexture2DOES"));
     if (!imageTargetTexture2D)
@@ -268,6 +258,198 @@ void RemoteWCVideoSurface::paintToTextureMapper(TextureMapper& textureMapper, co
     glDeleteTextures(1, &texture);
 }
 
+bool RemoteWCVideoSurface::ensureEGLImage(Slot& slot)
+{
+    if (slot.eglImage)
+        return true;
+    if (!createImageKHR())
+        return false;
+    const EGLint attributes[] = { EGL_NONE };
+    slot.eglImage = createImageKHR()(compositorEGLDisplay(), EGL_NO_CONTEXT, EGL_D3D11_TEXTURE_ANGLE, reinterpret_cast<EGLClientBuffer>(slot.texture.Get()), attributes);
+    if (slot.eglImage == EGL_NO_IMAGE_KHR)
+        slot.eglImage = nullptr;
+    if (!slot.eglImage) {
+        MEDIA_TRACE("eglCreateImage(EGL_D3D11_TEXTURE_ANGLE) failed: 0x%x", eglGetError());
+        m_failed = true;
+        return false;
+    }
+    return true;
+}
+
+bool RemoteWCVideoSurface::currentFrame(Slot*& slot, unsigned& width, unsigned& height)
+{
+    if (m_currentSlot >= 0 && static_cast<unsigned>(m_currentSlot) < m_slots.size()) {
+        slot = &m_slots[m_currentSlot];
+        width = m_width;
+        height = m_height;
+        return true;
+    }
+    if (m_retainedSlot) {
+        slot = &*m_retainedSlot;
+        width = m_retainedWidth;
+        height = m_retainedHeight;
+        return true;
+    }
+    return false;
+}
+
+// Lyra: picture-in-picture. The window belongs to the UI process; one surface draws into it at a time.
+static HashMap<HWND, RemoteWCVideoSurface*>& pictureInPictureOwners()
+{
+    static NeverDestroyed<HashMap<HWND, RemoteWCVideoSurface*>> owners;
+    return owners;
+}
+
+// Draws with its own GL context: keep the compositor's current (WCScene draws without making it current).
+class KeepCurrentGLContext {
+public:
+    KeepCurrentGLContext()
+        : m_display(eglGetCurrentDisplay())
+        , m_draw(eglGetCurrentSurface(EGL_DRAW))
+        , m_read(eglGetCurrentSurface(EGL_READ))
+        , m_context(eglGetCurrentContext())
+    {
+    }
+    ~KeepCurrentGLContext()
+    {
+        if (m_context != EGL_NO_CONTEXT)
+            eglMakeCurrent(m_display, m_draw, m_read, m_context);
+        else
+            eglMakeCurrent(compositorEGLDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    }
+private:
+    EGLDisplay m_display;
+    EGLSurface m_draw;
+    EGLSurface m_read;
+    EGLContext m_context;
+};
+
+void RemoteWCVideoSurface::setPictureInPictureWindow(uint64_t windowValue, bool redraw)
+{
+    if (m_invalidated)
+        return;
+    HWND window = reinterpret_cast<HWND>(windowValue);
+    if (!window) {
+        releasePictureInPicture();
+        return;
+    }
+    if (m_pictureInPicture && m_pictureInPicture->window == window) {
+        if (redraw)
+            drawPictureInPicture();
+        return;
+    }
+    releasePictureInPicture();
+    if (auto* owner = pictureInPictureOwners().get(window))
+        owner->releasePictureInPicture();
+
+    KeepCurrentGLContext keep;
+    EGLDisplay display = compositorEGLDisplay();
+    const EGLint configAttributes[] = { EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
+    EGLConfig config = nullptr;
+    EGLint configCount = 0;
+    if (!eglChooseConfig(display, configAttributes, &config, 1, &configCount) || !configCount) {
+        MEDIA_TRACE("picture-in-picture: no EGL config");
+        return;
+    }
+    auto pip = std::unique_ptr<PictureInPicture>(new PictureInPicture); // plain struct: not FastMalloc-annotated
+    pip->window = window;
+    pip->surface = eglCreateWindowSurface(display, config, reinterpret_cast<EGLNativeWindowType>(window), nullptr);
+    const EGLint contextAttributes[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
+    if (pip->surface != EGL_NO_SURFACE)
+        pip->context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttributes);
+    if (pip->surface == EGL_NO_SURFACE || pip->context == EGL_NO_CONTEXT || !eglMakeCurrent(display, pip->surface, pip->surface, pip->context)) {
+        MEDIA_TRACE("picture-in-picture: no EGL surface or context: 0x%x", eglGetError());
+        if (pip->context != EGL_NO_CONTEXT)
+            eglDestroyContext(display, pip->context);
+        if (pip->surface != EGL_NO_SURFACE)
+            eglDestroySurface(display, pip->surface);
+        return;
+    }
+    eglSwapInterval(display, 0); // never wait for vblank on the compositor's thread
+    pip->textureMapper = TextureMapper::create();
+    m_pictureInPicture = WTF::move(pip);
+    pictureInPictureOwners().set(window, this);
+    MEDIA_TRACE("drawing into the picture-in-picture window");
+    drawPictureInPicture();
+}
+
+void RemoteWCVideoSurface::drawPictureInPicture()
+{
+    if (!m_pictureInPicture)
+        return;
+    Slot* slot = nullptr;
+    unsigned frameWidth = 0, frameHeight = 0;
+    RECT client { };
+    if (!currentFrame(slot, frameWidth, frameHeight) || !frameWidth || !frameHeight) {
+        MEDIA_TRACE("picture-in-picture: no frame yet");
+        return;
+    }
+    if (!GetClientRect(m_pictureInPicture->window, &client) || client.right <= 0 || client.bottom <= 0) {
+        MEDIA_TRACE("picture-in-picture: window gone or empty");
+        return;
+    }
+
+    KeepCurrentGLContext keep;
+    EGLDisplay display = compositorEGLDisplay();
+    if (!eglMakeCurrent(display, m_pictureInPicture->surface, m_pictureInPicture->surface, m_pictureInPicture->context)) {
+        MEDIA_TRACE("picture-in-picture: eglMakeCurrent failed 0x%x", eglGetError());
+        return;
+    }
+    if (!ensureEGLImage(*slot))
+        return;
+    static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC imageTargetTexture2D = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+    if (!imageTargetTexture2D)
+        return;
+
+    MEDIA_TRACE_TIME("GPU proc: draw picture-in-picture");
+    glViewport(0, 0, client.right, client.bottom);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Letterboxed, at whole pixels.
+    float fit = std::min(static_cast<float>(client.right) / frameWidth, static_cast<float>(client.bottom) / frameHeight);
+    float width = std::round(frameWidth * fit), height = std::round(frameHeight * fit);
+    FloatRect target { std::round((client.right - width) / 2), std::round((client.bottom - height) / 2), width, height };
+
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    imageTargetTexture2D(GL_TEXTURE_2D, slot->eglImage);
+    auto& textureMapper = *m_pictureInPicture->textureMapper;
+    textureMapper.beginPainting(TextureMapper::FlipY::No, nullptr);
+    textureMapper.drawTexture(texture, { }, target, { }, 1);
+    textureMapper.endPainting();
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDeleteTextures(1, &texture);
+    eglSwapBuffers(display, m_pictureInPicture->surface);
+}
+
+void RemoteWCVideoSurface::releasePictureInPicture()
+{
+    if (!m_pictureInPicture)
+        return;
+    auto owner = pictureInPictureOwners().find(m_pictureInPicture->window);
+    if (owner != pictureInPictureOwners().end() && owner->value == this)
+        pictureInPictureOwners().remove(owner);
+    {
+        KeepCurrentGLContext keep;
+        EGLDisplay display = compositorEGLDisplay();
+        if (eglMakeCurrent(display, m_pictureInPicture->surface, m_pictureInPicture->surface, m_pictureInPicture->context))
+            m_pictureInPicture->textureMapper = nullptr;
+    }
+    EGLDisplay display = compositorEGLDisplay();
+    eglDestroyContext(display, m_pictureInPicture->context);
+    eglDestroySurface(display, m_pictureInPicture->surface);
+    m_pictureInPicture = nullptr;
+    MEDIA_TRACE("stopped drawing into the picture-in-picture window");
+}
+
 void RemoteWCVideoSurface::releaseRetainedSlot()
 {
     if (!m_retainedSlot)
@@ -296,6 +478,7 @@ void RemoteWCVideoSurface::invalidate()
     if (m_invalidated)
         return;
     m_invalidated = true;
+    releasePictureInPicture();
     releaseRetainedSlot();
     releaseTextures();
     // Detaches the layer from WCScene and WCContentBufferManager.

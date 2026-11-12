@@ -212,6 +212,12 @@ void WCVideoLayerProxy::presentLastFrameAgain(unsigned attemptsLeft)
     });
 }
 
+void WCVideoLayerProxy::setPictureInPictureWindow(uint64_t window, bool redraw)
+{
+    ASSERT(isMainThread());
+    m_connection->send(Messages::GPUConnectionToWebProcess::SetWCVideoSurfacePictureInPictureWindow(m_identifier, window, redraw), 0);
+}
+
 void WCVideoLayerProxy::setFailureHandler(Function<void()>&& handler)
 {
     ASSERT(isMainThread());

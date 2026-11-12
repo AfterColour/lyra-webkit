@@ -95,6 +95,11 @@ WK_EXPORT void WKPageEndPrinting(WKPageRef page);
 // rows top to bottom), `scale` device pixels per CSS pixel. `pixels` is null when the page could
 // not be drawn; it is only valid during the callback.
 typedef void (*WKPageDrawPageToImageForPrintingFunction)(const void* pixels, uint32_t width, uint32_t height, uint32_t bytesPerRow, void* context);
+// Lyra (Windows): the page's <video data-lyra-pip> is also drawn into `window` (an HWND; 0: stop) by
+// the GPU process, letterboxed, while the page stays as it is. Call again from time to time: the
+// marked video, or its player, may change (the next video). `redraw`: the window was resized.
+WK_EXPORT void WKPageSetVideoPictureInPictureWindow(WKPageRef page, uint64_t window, bool redraw);
+
 WK_EXPORT void WKPageDrawPageToImageForPrinting(WKPageRef page, WKFrameRef frame, WKPrintInfo printInfo, uint32_t pageIndex, float scale, WKPageDrawPageToImageForPrintingFunction callback, void* context);
 
 WK_EXPORT bool WKPageGetIsControlledByAutomation(WKPageRef page);

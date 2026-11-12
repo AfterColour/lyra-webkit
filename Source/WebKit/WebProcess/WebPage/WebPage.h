@@ -1547,6 +1547,8 @@ public:
 #if PLATFORM(WIN)
     // Lyra: one printed page as a bitmap (after ComputePagesForPrinting), `scale` device pixels per CSS pixel.
     void drawPageToImageForPrinting(WebCore::FrameIdentifier, const PrintInfo&, uint32_t pageIndex, float scale, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&&);
+    // Lyra: the page's video marked data-lyra-pip is also shown in `window` (0: none).
+    void setVideoPictureInPictureWindow(uint64_t window, bool redraw);
 #endif
 #if PLATFORM(COCOA)
     void drawToPDF(const std::optional<WebCore::FloatRect>&, bool allowTransparentBackground,  CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);

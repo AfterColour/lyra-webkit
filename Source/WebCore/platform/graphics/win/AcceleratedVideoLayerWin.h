@@ -64,7 +64,17 @@ public:
     // "adapter-luid" ((HighPart << 32) | LowPart); 0 if unknown. Decoding must happen on the same
     // adapter, or the GPU process cannot open the shared textures (laptops with two GPUs).
     virtual int64_t adapterLUID() const = 0;
+    // Lyra: main thread. Also show the frames in `window` (a picture-in-picture window of the UI
+    // process; 0: stop), drawn by the GPU process. `redraw`: draw the last frame again (the window
+    // was resized while the video is paused).
+    virtual void setPictureInPictureWindow(uint64_t window, bool redraw) { UNUSED_PARAM(window); UNUSED_PARAM(redraw); }
 };
+
+class MediaPlayer;
+// Lyra: main thread. The player whose video is shown in the picture-in-picture `window` (null or 0:
+// none). One per web process; the previous one stops. Its video then keeps playing while the page
+// is hidden or the video is scrolled away, and its frames are scaled for the larger of the two.
+WEBCORE_EXPORT void setPictureInPictureMediaPlayer(MediaPlayer*, uint64_t window, bool redraw);
 
 } // namespace WebCore
 

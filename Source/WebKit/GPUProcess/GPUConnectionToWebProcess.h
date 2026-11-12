@@ -376,6 +376,7 @@ private:
     void setWCVideoSurfaceTextures(uint64_t identifier, Vector<Win32Handle>&&, uint32_t width, uint32_t height);
     void presentWCVideoSurface(uint64_t identifier, uint32_t slot, CompletionHandler<void(std::optional<WCContentBufferIdentifier>, bool)>&&);
     void releaseWCVideoSurface(uint64_t identifier);
+    void setWCVideoSurfacePictureInPictureWindow(uint64_t identifier, uint64_t window, bool redraw);
 #endif
 #endif
 

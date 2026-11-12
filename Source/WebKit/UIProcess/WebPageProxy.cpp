@@ -18656,6 +18656,13 @@ void WebPageProxy::drawPageToImageForPrinting(WebFrameProxy& frame, const PrintI
     auto frameID = frame.frameID();
     sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebPage::DrawPageToImageForPrinting(frameID, printInfo, pageIndex, scale), WTF::move(callback));
 }
+
+void WebPageProxy::setVideoPictureInPictureWindow(uint64_t window, bool redraw)
+{
+    if (!hasRunningProcess())
+        return;
+    send(Messages::WebPage::SetVideoPictureInPictureWindow(window, redraw));
+}
 #endif
 
 #if PLATFORM(COCOA)

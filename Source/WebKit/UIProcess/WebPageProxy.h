@@ -2127,6 +2127,7 @@ public:
     std::optional<IPC::AsyncReplyID> computePagesForPrinting(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(const Vector<WebCore::IntRect>&, double, const WebCore::FloatBoxExtent&)>&&);
 #if PLATFORM(WIN)
     void drawPageToImageForPrinting(WebFrameProxy&, const PrintInfo&, uint32_t pageIndex, float scale, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
+    void setVideoPictureInPictureWindow(uint64_t window, bool redraw);
 #endif
     void getPDFFirstPageSize(WebCore::FrameIdentifier, CompletionHandler<void(WebCore::FloatSize)>&&);
 #if PLATFORM(COCOA)

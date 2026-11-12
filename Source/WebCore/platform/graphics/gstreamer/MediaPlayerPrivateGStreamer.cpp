@@ -217,8 +217,62 @@ MediaPlayerPrivateGStreamer::MediaPlayerPrivateGStreamer(MediaPlayer& player)
     m_audioSink = createAudioSink();
 }
 
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+// Lyra: players with a D3D11 video layer (main thread), and the one in picture-in-picture.
+static HashSet<MediaPlayerPrivateGStreamer*>& d3d11Players()
+{
+    static NeverDestroyed<HashSet<MediaPlayerPrivateGStreamer*>> players;
+    return players;
+}
+
+static MediaPlayerPrivateGStreamer*& pictureInPicturePlayer()
+{
+    static MediaPlayerPrivateGStreamer* player;
+    return player;
+}
+
+void setPictureInPictureMediaPlayer(MediaPlayer* mediaPlayer, uint64_t window, bool redraw)
+{
+    ASSERT(isMainThread());
+    MediaPlayerPrivateGStreamer* target = nullptr;
+    if (mediaPlayer && window) {
+        for (auto* candidate : d3d11Players()) {
+            if (RefPtr player = candidate->m_player.get(); player.get() == mediaPlayer) {
+                target = candidate;
+                break;
+            }
+        }
+    }
+    auto*& current = pictureInPicturePlayer();
+    if (current && current != target)
+        current->setPictureInPictureWindow(0, false);
+    current = target;
+    if (target)
+        target->setPictureInPictureWindow(window, redraw);
+}
+
+void MediaPlayerPrivateGStreamer::setPictureInPictureWindow(uint64_t window, bool redraw)
+{
+    bool changed = m_pictureInPictureWindow != window;
+    m_pictureInPictureWindow = window;
+    if (changed) {
+        MEDIA_TRACE("picture-in-picture window %llx", static_cast<unsigned long long>(window));
+        managePlayerSuspend();
+    }
+    if (changed || redraw)
+        updateD3D11VideoScaling();
+    if ((changed || redraw) && m_d3d11VideoLayer)
+        m_d3d11VideoLayer->setPictureInPictureWindow(window, redraw || changed);
+}
+#endif
+
 MediaPlayerPrivateGStreamer::~MediaPlayerPrivateGStreamer()
 {
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    d3d11Players().remove(this);
+    if (pictureInPicturePlayer() == this)
+        pictureInPicturePlayer() = nullptr;
+#endif
     tearDown(true);
 }
 
@@ -3750,6 +3804,7 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
         if (d3d11convert)
             m_d3d11VideoLayer = AcceleratedVideoLayerWin::create();
         if (m_d3d11VideoLayer) {
+            d3d11Players().add(this);
             prewarmGStreamerD3D11(m_d3d11VideoLayer->adapterLUID());
             m_d3d11VideoLayer->setFailureHandler([weakThis = ThreadSafeWeakPtr { *this }] {
                 if (RefPtr self = weakThis.get())
@@ -4547,6 +4602,10 @@ void MediaPlayerPrivateGStreamer::managePlayerSuspend()
 
     bool muted = isMuted();
     bool shouldBeSuspended = (player && player->isVideoPlayer()) && muted && !m_isVisibleInViewport && !allowPlaybackOfInvisibleVideos;
+#if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
+    if (m_pictureInPictureWindow)
+        shouldBeSuspended = false; // Lyra: shown in picture-in-picture
+#endif
     GST_INFO_OBJECT(m_pipeline.get(), "%s %s player %svisible in viewport", muted ? "Muted" : "Un-muted", (player && player->isVideoPlayer()) ? "video" : "audio", m_isVisibleInViewport ? "" : "not ");
 
     if (shouldBeSuspended && !isSuspended()) {
@@ -4624,6 +4683,13 @@ void MediaPlayerPrivateGStreamer::updateD3D11VideoScaling()
     float scale = player->playerContentsScale();
     float fit = std::min(m_size.width() / m_videoSize.width(), m_size.height() / m_videoSize.height());
     IntSize target { static_cast<int>(std::lround(m_videoSize.width() * fit * scale)), static_cast<int>(std::lround(m_videoSize.height() * fit * scale)) };
+    // Lyra: in picture-in-picture, the larger of the page's video and the window's.
+    if (RECT client; m_pictureInPictureWindow && GetClientRect(reinterpret_cast<HWND>(m_pictureInPictureWindow), &client) && client.right > 0 && client.bottom > 0) {
+        float pipFit = std::min(client.right / m_videoSize.width(), client.bottom / m_videoSize.height());
+        IntSize pip { static_cast<int>(std::lround(m_videoSize.width() * pipFit)), static_cast<int>(std::lround(m_videoSize.height() * pipFit)) };
+        if (pip.width() > target.width())
+            target = pip;
+    }
     // Never more pixels than a 4K frame, and even sizes for the video processor.
     float limit = std::min(1.f, std::min(3840.f / std::max(target.width(), 1), 3840.f / std::max(target.height(), 1)));
     target = IntSize { static_cast<int>(target.width() * limit) & ~1, static_cast<int>(target.height() * limit) & ~1 };

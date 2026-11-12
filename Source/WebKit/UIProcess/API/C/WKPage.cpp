@@ -2988,6 +2988,17 @@ void WKPageDrawPagesToPDF(WKPageRef pageRef, WKFrameRef frame, WKPrintInfo print
 }
 #endif
 
+void WKPageSetVideoPictureInPictureWindow(WKPageRef pageRef, uint64_t window, bool redraw)
+{
+#if PLATFORM(WIN)
+    toImpl(pageRef)->setVideoPictureInPictureWindow(window, redraw);
+#else
+    UNUSED_PARAM(pageRef);
+    UNUSED_PARAM(window);
+    UNUSED_PARAM(redraw);
+#endif
+}
+
 void WKPageDrawPageToImageForPrinting(WKPageRef pageRef, WKFrameRef frame, WKPrintInfo printInfo, uint32_t pageIndex, float scale, WKPageDrawPageToImageForPrintingFunction callback, void* context)
 {
 #if PLATFORM(WIN)

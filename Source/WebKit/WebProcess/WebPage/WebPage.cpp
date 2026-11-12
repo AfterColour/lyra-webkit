@@ -287,6 +287,10 @@
 #include <WebCore/MIMETypeRegistry.h>
 #include <WebCore/MediaDocument.h>
 #include <WebCore/MediaPlayer.h>
+#if PLATFORM(WIN) && USE(GRAPHICS_LAYER_WC) && USE(GSTREAMER)
+#include <WebCore/AcceleratedVideoLayerWin.h>
+#include <WebCore/HTMLMediaElement.h>
+#endif
 #include <WebCore/MouseEvent.h>
 #include <WebCore/NativeImage.h>
 #include <WebCore/NavigationScheduler.h>
@@ -7897,6 +7901,29 @@ void WebPage::pdfSnapshotAtSize(LocalFrame& localMainFrame, GraphicsContext& con
 }
 
 #if PLATFORM(WIN)
+void WebPage::setVideoPictureInPictureWindow(uint64_t window, bool redraw)
+{
+#if USE(GRAPHICS_LAYER_WC) && USE(GSTREAMER)
+    RefPtr<HTMLMediaElement> video;
+    if (window) {
+        if (RefPtr frame = m_page->localMainFrame()) {
+            if (RefPtr document = frame->document()) {
+                auto result = document->querySelector("video[data-lyra-pip]"_s);
+                if (!result.hasException())
+                    video = dynamicDowncast<HTMLMediaElement>(WTF::getPtr(result.returnValue()));
+            }
+        }
+    }
+    RefPtr<MediaPlayer> player;
+    if (video)
+        player = video->player();
+    WebCore::setPictureInPictureMediaPlayer(player.get(), video ? window : 0, redraw);
+#else
+    UNUSED_PARAM(window);
+    UNUSED_PARAM(redraw);
+#endif
+}
+
 void WebPage::drawPageToImageForPrinting(WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, uint32_t pageIndex, float scale, CompletionHandler<void(std::optional<WebCore::ShareableBitmap::Handle>&&)>&& reply)
 {
     if (!m_printContext)

@@ -479,6 +479,10 @@ protected:
     IntSize m_d3d11HalveSizes[2];
     GRefPtr<GstPad> m_d3d11ConvertSinkPad;
     IntSize m_d3d11ScaleTarget;
+    // Lyra: picture-in-picture (setPictureInPictureMediaPlayer).
+    friend void setPictureInPictureMediaPlayer(MediaPlayer*, uint64_t, bool);
+    void setPictureInPictureWindow(uint64_t window, bool redraw);
+    uint64_t m_pictureInPictureWindow { 0 };
 #endif
     bool m_canRenderingBeAccelerated { false };
 

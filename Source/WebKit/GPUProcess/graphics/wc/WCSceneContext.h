@@ -45,6 +45,11 @@ public:
     bool makeContextCurrent();
     std::unique_ptr<WebCore::TextureMapper> createTextureMapper();
     void swapBuffers();
+    // Lyra: ANGLE gives the window's swap chain a new size only after a frame was presented, so
+    // the first frame after a resize is shown at the old size (a stale strip where the window
+    // grew). With the context current, resize it now when the window already has the height of
+    // the content about to be drawn (then the content lines up with the top of the window).
+    void fitSwapChainToWindow(int contentHeight);
 
     // Lyra: the scene that last painted this window for a layer tree update from its web process.
     // After a navigation to another web process the old page's scene stays alive for a while; it
@@ -54,6 +59,7 @@ public:
 
 private:
     const std::unique_ptr<WebCore::GLContext> m_glContext;
+    const uint64_t m_nativeWindow;
 };
 
 } // namespace WebKit

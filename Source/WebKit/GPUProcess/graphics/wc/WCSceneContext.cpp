@@ -29,6 +29,12 @@
 #if USE(GRAPHICS_LAYER_WC)
 
 #include <WebCore/GLContext.h>
+#if USE(LIBEPOXY)
+#include <epoxy/egl.h>
+#else
+#include <EGL/egl.h>
+#endif
+#include <windows.h>
 #include <WebCore/PlatformDisplay.h>
 #include <WebCore/TextureMapper.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -39,6 +45,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WCSceneContext);
 
 WCSceneContext::WCSceneContext(uint64_t nativeWindow)
     : m_glContext(WebCore::GLContext::create(WebCore::PlatformDisplay::sharedDisplay(), reinterpret_cast<GLNativeWindowType>(nativeWindow)))
+    , m_nativeWindow(nativeWindow)
 {
 }
 
@@ -54,6 +61,18 @@ bool WCSceneContext::makeContextCurrent()
 std::unique_ptr<WebCore::TextureMapper> WCSceneContext::createTextureMapper()
 {
     return WebCore::TextureMapper::create();
+}
+
+void WCSceneContext::fitSwapChainToWindow(int contentHeight)
+{
+    RECT client;
+    if (!m_glContext || !GetClientRect(reinterpret_cast<HWND>(m_nativeWindow), &client))
+        return;
+    if (client.bottom - client.top != contentHeight)
+        return;
+    // eglWaitNative makes ANGLE (D3D) compare the swap chain with the window's client size and
+    // resize it if they differ; nothing happens when they match.
+    eglWaitNative(EGL_CORE_NATIVE_ENGINE);
 }
 
 void WCSceneContext::swapBuffers()

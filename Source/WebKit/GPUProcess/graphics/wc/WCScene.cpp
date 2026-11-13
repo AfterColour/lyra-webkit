@@ -355,6 +355,7 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
             MEDIA_TRACE("scene %llu takes the window over from scene %llu", static_cast<unsigned long long>(m_sceneID), static_cast<unsigned long long>(m_context->activeSceneID));
             m_context->activeSceneID = m_sceneID;
         }
+        m_context->fitSwapChainToWindow(update.viewport.height());
         glViewport(0, 0, update.viewport.width(), update.viewport.height());
         if (!update.remoteContextHostedIdentifier) {
             if (update.backgroundColor.isVisible())
@@ -504,6 +505,7 @@ bool WCScene::recomposite()
         return false;
 
     root->texmapLayer.applyAnimationsRecursively(MonotonicTime::now());
+    m_context->fitSwapChainToWindow(m_lastViewport.height());
     glViewport(0, 0, m_lastViewport.width(), m_lastViewport.height());
     clearToBackground();
     m_textureMapper->beginPainting(WebCore::TextureMapper::FlipY::No, nullptr);

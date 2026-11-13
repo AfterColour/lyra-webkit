@@ -125,6 +125,8 @@ WCScene::~WCScene()
 {
     if (m_sceneID)
         liveScenes().remove(m_sceneID);
+    if (m_context && m_sceneID && m_context->activeSceneID == m_sceneID)
+        m_context->activeSceneID = 0;
     if (!m_context->makeContextCurrent())
         return;
     m_textureMapper = nullptr;
@@ -349,6 +351,10 @@ std::optional<UpdateInfo> WCScene::update(WCUpdateInfo&& update)
         texture = WebCore::BitmapTexturePool::singleton().acquireTexture(update.viewport, { WebCore::BitmapTexture::Flags::SupportsAlpha });
         surface = texture.get();
     } else {
+        if (m_context->activeSceneID != m_sceneID) {
+            MEDIA_TRACE("scene %llu takes the window over from scene %llu", static_cast<unsigned long long>(m_sceneID), static_cast<unsigned long long>(m_context->activeSceneID));
+            m_context->activeSceneID = m_sceneID;
+        }
         glViewport(0, 0, update.viewport.width(), update.viewport.height());
         if (!update.remoteContextHostedIdentifier) {
             if (update.backgroundColor.isVisible())
@@ -448,9 +454,15 @@ void WCScene::scheduleAnimationFrameIfNeeded()
     });
 }
 
+// Lyra: whether this scene may paint the window by itself (see WCSceneContext::activeSceneID).
+bool WCScene::ownsWindow() const
+{
+    return m_context && (!m_context->activeSceneID || m_context->activeSceneID == m_sceneID);
+}
+
 bool WCScene::requestRecomposite()
 {
-    if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper)
+    if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper || !ownsWindow())
         return false;
     m_needsRecomposite = true;
     if (m_recompositeScheduled)
@@ -483,6 +495,10 @@ bool WCScene::recomposite()
 {
     if (!m_canRecomposite || !m_lastRootLayer || !m_textureMapper)
         return false;
+    if (!ownsWindow()) {
+        MEDIA_TRACE("scene %llu: recomposite skipped, the window shows scene %llu", static_cast<unsigned long long>(m_sceneID), static_cast<unsigned long long>(m_context->activeSceneID));
+        return false;
+    }
     auto* root = m_layers.get(*m_lastRootLayer);
     if (!root || !m_context->makeContextCurrent())
         return false;

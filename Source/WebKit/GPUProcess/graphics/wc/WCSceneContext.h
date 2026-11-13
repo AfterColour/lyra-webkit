@@ -46,6 +46,12 @@ public:
     std::unique_ptr<WebCore::TextureMapper> createTextureMapper();
     void swapBuffers();
 
+    // Lyra: the scene that last painted this window for a layer tree update from its web process.
+    // After a navigation to another web process the old page's scene stays alive for a while; it
+    // must not paint the window on its own any more (recomposites for unpainted-tile placeholders,
+    // video frames or scrolling), or the two pages take turns on screen. Scene thread only.
+    uint64_t activeSceneID { 0 };
+
 private:
     const std::unique_ptr<WebCore::GLContext> m_glContext;
 };

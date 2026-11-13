@@ -99,6 +99,7 @@ private:
     void clearToBackground();
 
     bool applyScrollingLayerUpdate(Layer&, uint64_t sequence, const WCScrollingLayerUpdate&);
+    bool ownsWindow() const;
 };
 
 } // namespace WebKit

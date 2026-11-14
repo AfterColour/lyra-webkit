@@ -57,6 +57,7 @@ list(APPEND WebKit_SOURCES
     UIProcess/win/AutomationClientWin.cpp
     UIProcess/win/AutomationSessionClientWin.cpp
     UIProcess/win/PageClientImpl.cpp
+    UIProcess/win/TextCheckerWin.cpp
     UIProcess/win/WebContextMenuProxyWin.cpp
     UIProcess/win/WebPageProxyWin.cpp
     UIProcess/win/WebPasteboardProxyWin.cpp
@@ -120,6 +121,7 @@ list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS
 
 list(APPEND WebKit_PRIVATE_LIBRARIES
     comctl32
+    ole32
 )
 
 if (USE_GSTREAMER)

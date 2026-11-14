@@ -28,7 +28,7 @@
 #include "config.h"
 #include "TextChecker.h"
 
-#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE)
+#if !PLATFORM(COCOA) && !PLATFORM(GTK) && !PLATFORM(WPE) && !PLATFORM(WIN)   // (Lyra: UIProcess/win/TextCheckerWin.cpp)
 #include "TextCheckerState.h"
 #include <WebCore/NotImplemented.h>
 

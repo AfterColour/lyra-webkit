@@ -34,6 +34,12 @@ extern "C" {
 
 WK_EXPORT void WKTextCheckerSetTestingMode(bool enabled);
 
+#if defined(WIN32) || defined(_WIN32)
+// Lyra: spell checking as you type (Windows Spell Checking API, see UIProcess/win/TextCheckerWin.cpp).
+WK_EXPORT bool WKTextCheckerIsContinuousSpellCheckingAllowed(void);
+WK_EXPORT void WKTextCheckerSetContinuousSpellCheckingEnabled(bool enabled);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -4073,6 +4073,26 @@ bool EventHandler::sendContextMenuEvent(const PlatformMouseEvent& event)
         m_mouseDownMayStartSelect = true; // context menu events are always allowed to perform a selection
         selectClosestContextualWordOrLinkFromHitTestResult(mouseEvent.hitTestResult(), shouldAppendTrailingWhitespace(mouseEvent, frame));
     }
+#if PLATFORM(WIN)
+    // Lyra: a right-click on a misspelled (underlined) word in an editable field selects that word,
+    // like Chrome and Edge on Windows, so the context menu offers its corrections (without a
+    // selection WebCore has no word to suggest corrections for on Windows).
+    else if (event.inputSource() == MouseEventInputSource::UserDriven && !selection->contains(viewportPos)
+        && protect(frame->editor())->isContinuousSpellCheckingEnabled()) {
+        RefPtr target = mouseEvent.hitTestResult().targetNode();
+        if (target && target->renderer()) {
+            VisiblePosition position(protect(target->renderer())->visiblePositionForPoint(mouseEvent.hitTestResult().localPoint(), HitTestSource::User));
+            if (position.isNotNull() && isEditablePosition(position.deepEquivalent())) {
+                VisibleSelection word(position);
+                word.expandUsingGranularity(TextGranularity::WordGranularity);
+                if (auto range = word.toNormalizedRange(); range && doc->markers().hasMarkers(*range, DocumentMarkerType::Spelling)) {
+                    m_mouseDownMayStartSelect = true;
+                    updateSelectionForMouseDownDispatchingSelectStart(protect(position.deepEquivalent().anchorNode()).get(), word, TextGranularity::WordGranularity);
+                }
+            }
+        }
+    }
+#endif
 
     auto swallowEvent = !dispatchMouseEvent(eventNames().contextmenuEvent, protect(mouseEvent.targetNode()).get(), 0, event, FireMouseOverOut::No);
 

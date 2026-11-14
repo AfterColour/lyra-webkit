@@ -34,3 +34,15 @@ void WKTextCheckerSetTestingMode(bool enabled)
 {
     TextChecker::setTestingMode(enabled);
 }
+
+#if PLATFORM(WIN)
+bool WKTextCheckerIsContinuousSpellCheckingAllowed()
+{
+    return TextChecker::isContinuousSpellCheckingAllowed();
+}
+
+void WKTextCheckerSetContinuousSpellCheckingEnabled(bool enabled)
+{
+    TextChecker::setContinuousSpellCheckingEnabled(enabled);
+}
+#endif

@@ -123,8 +123,15 @@ public:
         case PlatformLayerRepresentation: {
             if (std::holds_alternative<GraphicsLayerData>(m_data)) {
                 auto& data = std::get<GraphicsLayerData>(m_data);
-                if (data.graphicsLayer)
+                if (data.graphicsLayer) {
+#if USE(TEXTURE_MAPPER) && !USE(COORDINATED_GRAPHICS)
+                    // [Win] PlatformLayerContainer is a std::unique_ptr here: wrapping the layer in one
+                    // would delete it (and does not compile with the type only declared). Not owned.
+                    return platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer });
+#else
                     SUPPRESS_FORWARD_DECL_ARG return PlatformLayerContainer { platformLayerFromGraphicsLayer(Ref { *data.graphicsLayer }) }.get();
+#endif
+                }
             }
             return static_cast<ScrollingPlatformLayer*>(nullptr);
         }

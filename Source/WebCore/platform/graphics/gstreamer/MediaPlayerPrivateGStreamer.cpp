@@ -4491,7 +4491,7 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GRefPtr<GstSample>&& sample)
 }
 
 #if OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
-PlatformLayer* MediaPlayerPrivateGStreamer::platformLayer() const
+PlatformLayer* MediaPlayerPrivateGStreamer::platformLayer()
 {
     return isUsingD3D11VideoLayer() ? m_d3d11VideoLayer->platformLayer() : nullptr;
 }

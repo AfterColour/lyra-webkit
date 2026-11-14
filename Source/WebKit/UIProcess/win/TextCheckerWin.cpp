@@ -77,34 +77,54 @@ public:
 
     bool available() { ensure(); return !m_dictionaries.isEmpty(); }
 
+    // Every misspelled word of `text`, in text order. A word is judged by the dictionaries of its
+    // script only (Cyrillic words by Russian, Latin ones by English...): it is misspelled when each
+    // of them flags it. A dictionary of another script marks words it cannot read in its own way
+    // (whole runs, or not at all), so it has no say.
+    Vector<std::pair<unsigned, unsigned>> misspellings(StringView text)
+    {
+        ensure();
+        if (m_dictionaries.isEmpty() || text.isEmpty())
+            return { };
+        String copy = text.toString();
+        Vector<wchar_t> buffer = toWide(copy);
+        Vector<Vector<std::pair<unsigned, unsigned>>> errors;
+        for (auto& dictionary : m_dictionaries)
+            errors.append(errorsOf(dictionary, buffer));
+        auto overlaps = [](const std::pair<unsigned, unsigned>& a, const std::pair<unsigned, unsigned>& b) {
+            return a.first < b.first + b.second && b.first < a.first + a.second;
+        };
+        Vector<std::pair<unsigned, unsigned>> result;
+        for (size_t d = 0; d < m_dictionaries.size(); ++d) {
+            for (auto& range : errors[d]) {
+                if (range.first + range.second > copy.length())
+                    continue;
+                if (hasCyrillic(copy.substring(range.first, range.second)) != m_dictionaries[d].cyrillic)
+                    continue;               // not this dictionary's script
+                bool everyone = true;
+                for (size_t other = 0; other < m_dictionaries.size() && everyone; ++other) {
+                    if (other == d || m_dictionaries[other].cyrillic != m_dictionaries[d].cyrillic)
+                        continue;
+                    everyone = errors[other].containsIf([&](const auto& e) { return overlaps(e, range); });
+                }
+                if (everyone && !result.containsIf([&](const auto& r) { return overlaps(r, range); }))
+                    result.append(range);
+            }
+        }
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
     // The first misspelled word of `text`: location / length, or -1 / 0.
     void check(StringView text, int32_t& location, int32_t& length)
     {
         location = -1;
         length = 0;
-        ensure();
-        if (m_dictionaries.isEmpty() || text.isEmpty())
+        auto all = misspellings(text);
+        if (all.isEmpty())
             return;
-        String copy = text.toString();
-        Vector<wchar_t> buffer = toWide(copy);
-        // Ranges every dictionary objects to, in text order: the first one is the answer.
-        Vector<std::pair<unsigned, unsigned>> candidates;
-        bool first = true;
-        for (auto& dictionary : m_dictionaries) {
-            Vector<std::pair<unsigned, unsigned>> errors = errorsOf(dictionary, buffer);
-            if (first) {
-                candidates = WTF::move(errors);
-                first = false;
-            } else {
-                candidates.removeAllMatching([&](const auto& candidate) {
-                    return !errors.containsIf([&](const auto& e) { return e.first == candidate.first && e.second == candidate.second; });
-                });
-            }
-            if (candidates.isEmpty())
-                return;
-        }
-        location = candidates[0].first;
-        length = candidates[0].second;
+        location = all[0].first;
+        length = all[0].second;
     }
 
     Vector<String> suggestions(const String& word)
@@ -358,9 +378,26 @@ void TextChecker::ignoreWord(SpellDocumentTag, const String& word)
     SpellCheckers::singleton().ignore(word);
 }
 
-void TextChecker::requestCheckingOfString(Ref<TextCheckerCompletion>&& completion, int32_t)
+// The whole paragraph at once (pasted text, text already in a field): WebCore marks every
+// misspelled word the Windows checker finds in it.
+Vector<TextCheckingResult> TextChecker::checkTextOfParagraph(SpellDocumentTag, StringView text, int32_t, OptionSet<TextCheckingType> checkingTypes, bool)
 {
-    completion->didFinishCheckingText({ });
+    Vector<TextCheckingResult> results;
+    if (!checkingTypes.contains(TextCheckingType::Spelling))
+        return results;
+    for (auto& [start, length] : SpellCheckers::singleton().misspellings(text)) {
+        TextCheckingResult result;
+        result.type = TextCheckingType::Spelling;
+        result.range = CharacterRange(start, length);
+        results.append(WTF::move(result));
+    }
+    return results;
+}
+
+void TextChecker::requestCheckingOfString(Ref<TextCheckerCompletion>&& completion, int32_t insertionPoint)
+{
+    TextCheckingRequestData request = completion->textCheckingRequestData();
+    completion->didFinishCheckingText(checkTextOfParagraph(completion->spellDocumentTag(), request.text(), insertionPoint, request.checkingTypes(), false));
 }
 
 void TextChecker::requestExtendedCheckingOfString(Ref<TextCheckerCompletion>&& completion, int32_t)

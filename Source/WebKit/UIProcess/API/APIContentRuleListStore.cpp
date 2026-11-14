@@ -339,7 +339,7 @@ static std::expected<MappedData, std::error_code> compiledToFile(WTF::String&& j
             writeToFile(sourceJSON.is8Bit());
             m_sourceWritten += sizeof(bool);
             if (sourceJSON.is8Bit()) {
-                writeToFile(WebKit::NetworkCache::Data(sourceJSON.span8()));
+                writeToFile(WebKit::NetworkCache::Data(asBytes(sourceJSON.span8())));   // ([Win] curl: not ambiguous)
                 m_sourceWritten += sourceJSON.length();
             } else {
                 writeToFile(WebKit::NetworkCache::Data(asBytes(sourceJSON.span16())));

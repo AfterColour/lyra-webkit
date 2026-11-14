@@ -199,7 +199,7 @@ public:
     RefPtr<CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const override;
 #elif OS(WINDOWS) && USE(GRAPHICS_LAYER_WC)
     // D3D11 video layer (see AcceleratedVideoLayerWin): frames stay on the GPU.
-    PlatformLayer* platformLayer() const override;
+    PlatformLayer* platformLayer() override;
     bool supportsAcceleratedRendering() const override;
 #endif
 

@@ -30,6 +30,7 @@
 #include "APICompletionListener.h"
 #include "APIContentRuleList.h"
 #include "APIFrameInfo.h"
+#include "APIContentWorld.h"
 #include "APIScriptMessage.h"
 #include "APIUserScript.h"
 #include "InjectUserScriptImmediately.h"
@@ -112,6 +113,14 @@ void WKUserContentControllerAddScriptMessageHandler(WKUserContentControllerRef u
     String name = toWTFString(wkName);
 
     auto handler = WebKit::WebScriptMessageHandler::create(makeUnique<WebScriptMessageClient>(name, callback, context), name, API::ContentWorld::pageContentWorldSingleton());
+    protect(toImpl(userContentController))->addUserScriptMessageHandler(handler);
+}
+
+void WKUserContentControllerAddScriptMessageHandlerInWorld(WKUserContentControllerRef userContentController, WKStringRef wkName, WKScriptMessageHandlerCallback callback, const void* context, WKStringRef worldName)
+{
+    String name = toWTFString(wkName);
+    Ref world = worldName ? API::ContentWorld::sharedWorldWithName(toWTFString(worldName)) : Ref { API::ContentWorld::pageContentWorldSingleton() };
+    auto handler = WebKit::WebScriptMessageHandler::create(makeUnique<WebScriptMessageClient>(name, callback, context), name, world.get());
     protect(toImpl(userContentController))->addUserScriptMessageHandler(handler);
 }
 

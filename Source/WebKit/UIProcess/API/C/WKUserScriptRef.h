@@ -37,6 +37,12 @@ WK_EXPORT WKTypeID WKUserScriptGetTypeID(void);
 
 WK_EXPORT WKUserScriptRef WKUserScriptCreateWithSource(WKStringRef source, _WKUserScriptInjectionTime injectionTime, bool forMainFrameOnly);
 
+// Lyra (browser extensions): a script for the isolated world named `worldName` (the same name is
+// the same world in every page; it sees the page's DOM but not its JavaScript), run only in frames
+// whose URL matches one of `allowlist` (null or empty: every frame) and none of `blocklist`.
+// The patterns are WebKit's user content URL patterns ("https://*.example.com/*").
+WK_EXPORT WKUserScriptRef WKUserScriptCreateWithSourceInWorld(WKStringRef source, _WKUserScriptInjectionTime injectionTime, bool forMainFrameOnly, WKStringRef worldName, WKArrayRef allowlist, WKArrayRef blocklist);
+
 WK_EXPORT WKStringRef WKUserScriptCopySource(WKUserScriptRef userScript);
 WK_EXPORT _WKUserScriptInjectionTime WKUserScriptGetInjectionTime(WKUserScriptRef userScript);
 WK_EXPORT bool WKUserScriptGetMainFrameOnly(WKUserScriptRef userScript);

@@ -45,6 +45,9 @@ WK_EXPORT void WKUserContentControllerRemoveAllUserContentFilters(WKUserContentC
 
 typedef void (*WKScriptMessageHandlerCallback)(WKScriptMessageRef message, WKCompletionListenerRef reply, const void *context);
 WK_EXPORT void WKUserContentControllerAddScriptMessageHandler(WKUserContentControllerRef userContentController, WKStringRef name, WKScriptMessageHandlerCallback callback, const void* context);
+// Lyra: window.webkit.messageHandlers.<name> in the isolated world named `worldName` only (see
+// WKUserScriptCreateWithSourceInWorld); the page's own scripts cannot reach it.
+WK_EXPORT void WKUserContentControllerAddScriptMessageHandlerInWorld(WKUserContentControllerRef userContentController, WKStringRef name, WKScriptMessageHandlerCallback callback, const void* context, WKStringRef worldName);
 WK_EXPORT void WKUserContentControllerRemoveAllUserMessageHandlers(WKUserContentControllerRef userContentController);
 
 #ifdef __cplusplus

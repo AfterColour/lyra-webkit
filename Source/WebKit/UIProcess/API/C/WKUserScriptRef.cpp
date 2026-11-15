@@ -27,6 +27,8 @@
 #include "WKUserScriptRef.h"
 
 #include "APIArray.h"
+#include "APIContentWorld.h"
+#include "APIString.h"
 #include "APIUserScript.h"
 #include "WKAPICast.h"
 
@@ -40,6 +42,25 @@ WKTypeID WKUserScriptGetTypeID()
 WKUserScriptRef WKUserScriptCreateWithSource(WKStringRef sourceRef, _WKUserScriptInjectionTime injectionTime, bool forMainFrameOnly)
 {
     return toAPILeakingRef(API::UserScript::create(WebCore::UserScript { toWTFString(sourceRef), { }, { }, { }, toUserScriptInjectionTime(injectionTime), forMainFrameOnly ? WebCore::UserContentInjectedFrames::InjectInTopFrameOnly : WebCore::UserContentInjectedFrames::InjectInAllFrames }, API::ContentWorld::pageContentWorldSingleton()));
+}
+
+static Vector<String> toStringVector(WKArrayRef arrayRef)
+{
+    Vector<String> result;
+    if (!arrayRef)
+        return result;
+    Ref array = *toImpl(arrayRef);
+    for (size_t i = 0; i < array->size(); ++i) {
+        if (RefPtr string = array->at<API::String>(i))
+            result.append(string->string());
+    }
+    return result;
+}
+
+WKUserScriptRef WKUserScriptCreateWithSourceInWorld(WKStringRef sourceRef, _WKUserScriptInjectionTime injectionTime, bool forMainFrameOnly, WKStringRef worldNameRef, WKArrayRef allowlistRef, WKArrayRef blocklistRef)
+{
+    Ref world = worldNameRef ? API::ContentWorld::sharedWorldWithName(toWTFString(worldNameRef)) : Ref { API::ContentWorld::pageContentWorldSingleton() };
+    return toAPILeakingRef(API::UserScript::create(WebCore::UserScript { toWTFString(sourceRef), { }, toStringVector(allowlistRef), toStringVector(blocklistRef), toUserScriptInjectionTime(injectionTime), forMainFrameOnly ? WebCore::UserContentInjectedFrames::InjectInTopFrameOnly : WebCore::UserContentInjectedFrames::InjectInAllFrames }, world.get()));
 }
 
 WKStringRef WKUserScriptCopySource(WKUserScriptRef userScriptRef)

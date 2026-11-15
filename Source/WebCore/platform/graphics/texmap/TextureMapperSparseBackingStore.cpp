@@ -172,10 +172,31 @@ TransformationMatrix TextureMapperSparseBackingStore::adjustedTransformForRect(c
     return TransformationMatrix::rectToRect({ { }, m_size }, targetRect);
 }
 
+// Lyra: a layer drawn 1:1 (no scaling or rotation, the usual case) lands on whole device pixels.
+// At a fractional offset - scrolling at 125 % / 150 % display scale, position: fixed layers moved
+// by the scrolling thread - every tile is resampled between pixels: the page goes slightly soft
+// and the tiles' shared edges show as thin lines where two half-covered pixels are blended.
+static TransformationMatrix snappedToDevicePixels(const TransformationMatrix& matrix)
+{
+    if (!matrix.isAffine())
+        return matrix;
+    constexpr double epsilon = 0.001;
+    if (std::abs(matrix.a() - 1) > epsilon || std::abs(matrix.d() - 1) > epsilon || std::abs(matrix.b()) > epsilon || std::abs(matrix.c()) > epsilon)
+        return matrix;
+    TransformationMatrix snapped = matrix;
+    snapped.setA(1);
+    snapped.setD(1);
+    snapped.setB(0);
+    snapped.setC(0);
+    snapped.setE(std::round(matrix.e()));
+    snapped.setF(std::round(matrix.f()));
+    return snapped;
+}
+
 void TextureMapperSparseBackingStore::paintToTextureMapper(TextureMapper& textureMapper, const FloatRect& targetRect, const TransformationMatrix& transform, float opacity)
 {
     IntRect rect = { { }, m_size };
-    TransformationMatrix adjustedTransform = transform * adjustedTransformForRect(targetRect);
+    TransformationMatrix adjustedTransform = snappedToDevicePixels(transform * adjustedTransformForRect(targetRect));
     auto now = MonotonicTime::now();
     for (auto& iterator : m_tiles) {
         float fade = 1;

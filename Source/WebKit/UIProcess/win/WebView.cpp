@@ -245,6 +245,13 @@ WebView::WebView(RECT rect, const API::PageConfiguration& configuration, HWND pa
     lazyInitialize(m_page, processPool.createWebPage(*m_pageClient, WTF::move(pageConfiguration)));
 
     auto& configurationFromPage = m_page->configuration();
+    // Custom schemes of the configuration (WKPageConfigurationSetURLSchemeHandler), as WKWebView does;
+    // before initializeWebPage, so the web page is created knowing them.
+    Vector<std::pair<String, Ref<WebURLSchemeHandler>>> schemeHandlers;
+    for (auto& pair : const_cast<API::PageConfiguration&>(configurationFromPage).urlSchemeHandlers())   // (the getter is not const; it only reads)
+        schemeHandlers.append({ pair.key, pair.value.copyRef() });
+    for (auto& [scheme, handler] : schemeHandlers)
+        m_page->setURLSchemeHandlerForScheme(WTF::move(handler), scheme);
     m_page->initializeWebPage(configurationFromPage.openedSite(), configurationFromPage.initialSandboxFlags(), configurationFromPage.initialReferrerPolicy());
 
     m_page->setIntrinsicDeviceScaleFactor(deviceScaleFactorForWindow(m_window));

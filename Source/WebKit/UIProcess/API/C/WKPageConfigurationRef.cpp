@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WKPageConfigurationRef.h"
 
+#include "APIFrameInfo.h"
 #include "APIPageConfiguration.h"
 #include "APIWebsitePolicies.h"
 #include "BrowsingContextGroup.h"
@@ -34,6 +35,12 @@
 #include "WebPageProxy.h"
 #include "WebProcessPool.h"
 #include "WebUserContentControllerProxy.h"
+#include "WebURLSchemeHandler.h"
+#include "WebURLSchemeTask.h"
+#include "WKType.h"
+#include <WebCore/HTTPHeaderNames.h>
+#include <WebCore/ResourceResponse.h>
+#include <WebCore/SharedBuffer.h>
 
 #if ENABLE(APPLICATION_MANIFEST)
 #include "APIApplicationManifest.h"
@@ -41,6 +48,75 @@
 #endif
 
 using namespace WebKit;
+
+namespace {
+
+// A custom scheme answered by the embedder through C callbacks.
+class WebURLSchemeHandlerC final : public WebKit::WebURLSchemeHandler {
+public:
+    static Ref<WebURLSchemeHandlerC> create(WKURLSchemeTaskStartCallback start, WKURLSchemeTaskStopCallback stop, const void* context)
+    {
+        return adoptRef(*new WebURLSchemeHandlerC(start, stop, context));
+    }
+
+private:
+    WebURLSchemeHandlerC(WKURLSchemeTaskStartCallback start, WKURLSchemeTaskStopCallback stop, const void* context)
+        : m_start(start), m_stop(stop), m_context(context) { }
+
+    static WKURLSchemeTaskRef taskRef(WebKit::WebURLSchemeTask& task) { return reinterpret_cast<WKURLSchemeTaskRef>(static_cast<API::Object*>(&task)); }
+
+    void platformStartTask(WebKit::WebPageProxy&, WebKit::WebURLSchemeTask& task) final
+    {
+        auto request = task.request();
+        WKURLRef url = toCopiedURLAPI(request.url());
+        WKStringRef method = toCopiedAPI(request.httpMethod());
+        WKURLRef frameURL = toCopiedURLAPI(task.frameInfo().request().url());
+        if (m_start)
+            m_start(taskRef(task), url, method, frameURL, m_context);
+        WKRelease(frameURL);
+        WKRelease(method);
+        WKRelease(url);
+    }
+
+    void platformStopTask(WebKit::WebPageProxy&, WebKit::WebURLSchemeTask& task) final
+    {
+        if (m_stop)
+            m_stop(taskRef(task), m_context);
+    }
+
+    WKURLSchemeTaskStartCallback m_start;
+    WKURLSchemeTaskStopCallback m_stop;
+    const void* m_context;
+};
+
+} // namespace
+
+void WKPageConfigurationSetURLSchemeHandler(WKPageConfigurationRef configuration, WKStringRef scheme, WKURLSchemeTaskStartCallback start, WKURLSchemeTaskStopCallback stop, const void* context)
+{
+    toImpl(configuration)->setURLSchemeHandlerForURLScheme(WebURLSchemeHandlerC::create(start, stop, context), toWTFString(scheme));
+}
+
+void WKURLSchemeTaskFinish(WKURLSchemeTaskRef taskRef, int httpStatus, WKStringRef mimeType, const void* bytes, size_t length)
+{
+    auto& task = static_cast<WebKit::WebURLSchemeTask&>(*reinterpret_cast<API::Object*>(const_cast<OpaqueWKURLSchemeTask*>(taskRef)));
+    String mime = mimeType ? toWTFString(mimeType) : "application/octet-stream"_s;
+    String type = mime;
+    String charset;
+    if (auto semicolon = mime.find(';'); semicolon != notFound) {
+        type = mime.left(semicolon).trim(isASCIIWhitespace<char16_t>);
+        if (auto at = mime.findIgnoringASCIICase("charset="_s); at != notFound)
+            charset = mime.substring(at + 8).trim(isASCIIWhitespace<char16_t>);
+    }
+    WebCore::ResourceResponse response { URL { task.request().url() }, String { type }, static_cast<long long>(length), String { charset } };
+    response.setHTTPStatusCode(httpStatus);
+    response.setHTTPHeaderField(WebCore::HTTPHeaderName::ContentType, mime);
+    response.setHTTPHeaderField(WebCore::HTTPHeaderName::AccessControlAllowOrigin, "*"_s);
+    if (task.didReceiveResponse(WTF::move(response)) != WebKit::WebURLSchemeTask::ExceptionType::None)
+        return;
+    if (length)
+        task.didReceiveData(WebCore::SharedBuffer::create(std::span { static_cast<const uint8_t*>(bytes), length }));
+    task.didComplete({ });
+}
 
 WKTypeID WKPageConfigurationGetTypeID()
 {

@@ -66,6 +66,17 @@ WK_EXPORT void WKPageConfigurationSetShouldSendConsoleLogsToUIProcessForTesting(
 
 WK_EXPORT void WKPageConfigurationSetPortsForUpgradingInsecureSchemeForTesting(WKPageConfigurationRef configuration, uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort);
 
+// A handler for a custom URL scheme (pages of the configuration load such URLs through it).
+// Start is called on the main thread for each load; answer it with WKURLSchemeTaskFinish, then or
+// later (WKRetain the task to keep it). Stop: the load was cancelled, do not answer.
+typedef const struct OpaqueWKURLSchemeTask* WKURLSchemeTaskRef;
+// frameURL: the address of the document that asked (for a link or a new page: the page it was on).
+typedef void (*WKURLSchemeTaskStartCallback)(WKURLSchemeTaskRef task, WKURLRef url, WKStringRef method, WKURLRef frameURL, const void* context);
+typedef void (*WKURLSchemeTaskStopCallback)(WKURLSchemeTaskRef task, const void* context);
+WK_EXPORT void WKPageConfigurationSetURLSchemeHandler(WKPageConfigurationRef configuration, WKStringRef scheme, WKURLSchemeTaskStartCallback start, WKURLSchemeTaskStopCallback stop, const void* context);
+// The whole answer at once: status, MIME type (with "; charset=..." when needed), body.
+WK_EXPORT void WKURLSchemeTaskFinish(WKURLSchemeTaskRef task, int httpStatus, WKStringRef mimeType, const void* bytes, size_t length);
+
 WK_EXPORT void WKPageConfigurationSetApplicationManifest(WKPageConfigurationRef configuration, WKStringRef json, WKURLRef manifestURL, WKURLRef documentURL);
 
 #ifdef __cplusplus

@@ -63,19 +63,32 @@ public:
             repainted = true;
             float deviceScaleFactor = m_owner.deviceScaleFactor();
             auto& dirtyRect = tile.dirtyRect();
-            IntRect scaledDirtyRect = dirtyRect;
-            scaledDirtyRect.scale(deviceScaleFactor);
+            // Lyra: the repaint lands on whole device pixels. Scaling the CSS rect as integers dropped
+            // the half pixels at 150 % (an odd x: 769.5 -> 769): the new piece went half a pixel to the
+            // left of where it was painted, and its edge kept a column of the old picture - a thin line
+            // that scrolled with the page, and text cut off where the piece ended.
+            FloatRect scaledFloatRect = dirtyRect;
+            scaledFloatRect.scale(deviceScaleFactor);
+            IntRect scaledDirtyRect = enclosingIntRect(scaledFloatRect);
+            IntRect scaledTileRect = tile.tileRect();
+            scaledTileRect.scale(deviceScaleFactor);          // as the tile's first, whole update made it
+            scaledDirtyRect.intersect(scaledTileRect);
+            if (scaledDirtyRect.isEmpty())
+                continue;
+            FloatRect paintRect = scaledDirtyRect;
+            paintRect.scale(1 / deviceScaleFactor);
             tileUpdate.dirtyRect = scaledDirtyRect;
 #if OS(WINDOWS) && USE(GSTREAMER)
             WebCore::mediaTraceTiming("WP: repainted tile area (kpx)", dirtyRect.width() * dirtyRect.height() * deviceScaleFactor * deviceScaleFactor / 1000.0);
 #endif
-            auto image = m_owner.createImageBuffer(dirtyRect.size(), deviceScaleFactor);
+            auto image = m_owner.createImageBuffer(FloatSize(scaledDirtyRect.size()), 1);
             auto& context = image->context();
             {
                 // Tile buffers are reused (DrawingAreaWC): leave the context state as it was.
                 GraphicsContextStateSaver stateSaver(context);
-                context.translate(-dirtyRect.x(), -dirtyRect.y());
-                m_owner.paintGraphicsLayerContents(context, dirtyRect);
+                context.scale(deviceScaleFactor);
+                context.translate(-paintRect.x(), -paintRect.y());
+                m_owner.paintGraphicsLayerContents(context, paintRect);
             }
             image->flushDrawingContextAsync();
             tileUpdate.backingStore.setImageBuffer(WTF::move(image));

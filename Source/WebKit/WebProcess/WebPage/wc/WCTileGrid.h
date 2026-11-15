@@ -48,6 +48,7 @@ public:
         void clearDirtyRect();
         bool hasDirtyRect() const;
         WebCore::IntRect& dirtyRect() LIFETIME_BOUND { return m_dirtyRect; }
+        const WebCore::IntRect& tileRect() const LIFETIME_BOUND { return m_tileRect; }
 
     private:
         bool m_willRemove { false };

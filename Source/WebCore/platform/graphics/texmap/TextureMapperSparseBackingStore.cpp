@@ -106,7 +106,23 @@ IntSize TextureMapperSparseBackingStore::cellSize()
     }
     if (size.width() > 0 && size.height() > 0)
         return m_cellSize = size;
-    return { size.width() > 0 ? size.width() : largest.width(), size.height() > 0 ? size.height() : largest.height() };
+    // A layer one tile wide (or high) so far: that tile spans it. The largest tile can be a pixel
+    // narrower than the layer (rounding of a scaled layer, e.g. a 32 px scrollbar with a 31 px
+    // tile), and taking it as the cell made up a 1 px column that never gets a tile: its
+    // placeholder pulsed for 10 s, drawn as a thin line, and repainted the scene 30 times a second.
+    return { size.width() > 0 ? size.width() : std::max(largest.width(), m_size.width()),
+             size.height() > 0 ? size.height() : std::max(largest.height(), m_size.height()) };
+}
+
+// Whether the tiles there already cover (nearly) all of `cell`.
+static bool coveredByTiles(const HashMap<TextureMapperSparseBackingStore::TileIndex, std::unique_ptr<TextureMapperTile>>& tiles, const IntRect& cell)
+{
+    long long covered = 0;
+    for (auto& iterator : tiles) {
+        IntRect overlap = intersection(enclosingIntRect(iterator.value->rect()), cell);
+        covered += static_cast<long long>(overlap.width()) * overlap.height();
+    }
+    return covered * 100 >= static_cast<long long>(cell.width()) * cell.height() * 98;
 }
 
 void TextureMapperSparseBackingStore::willAddTile(const TileIndex& index)
@@ -147,7 +163,8 @@ void TextureMapperSparseBackingStore::paintPlaceholders(TextureMapper& textureMa
             if (m_tiles.contains(index))
                 continue;
             IntRect cellRect = intersection(layerRect, { x * cell.width(), y * cell.height(), cell.width(), cell.height() });
-            if (cellRect.isEmpty())
+            // (a sliver at the layer's edge, or a cell the neighbouring tiles already cover)
+            if (cellRect.width() < 4 || cellRect.height() < 4 || coveredByTiles(m_tiles, cellRect))
                 continue;
             auto iterator = m_missingSince.find(index);
             MonotonicTime since = iterator != m_missingSince.end() ? iterator->value : now;

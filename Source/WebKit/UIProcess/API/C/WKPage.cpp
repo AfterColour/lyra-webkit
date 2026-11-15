@@ -2773,6 +2773,36 @@ void WKPageEvaluateJavaScriptInMainFrame(WKPageRef pageRef, WKStringRef scriptRe
     WKPageEvaluateJavaScriptInFrame(pageRef, nullptr, scriptRef, context, callback);
 }
 
+void WKPageEvaluateJavaScriptInFrameInWorld(WKPageRef pageRef, WKFrameInfoRef frame, WKStringRef scriptRef, WKStringRef worldNameRef, void* context, WKPageEvaluateJavaScriptFunction callback)
+{
+    CRASH_IF_SUSPENDED;
+    auto scriptString = IPC::TransferString::create(toImpl(scriptRef)->stringView());
+    if (!scriptString) {
+        if (callback)
+            callback(nullptr, nullptr, context);
+        return;
+    };
+
+    auto frameID = frame ? std::optional(toImpl(frame)->frameInfoData().frameID) : std::nullopt;
+    Ref world = worldNameRef ? API::ContentWorld::sharedWorldWithName(toWTFString(worldNameRef)) : Ref { API::ContentWorld::pageContentWorldSingleton() };
+    protect(toImpl(pageRef))->runJavaScriptInFrameInScriptWorld(WebKit::RunJavaScriptParameters {
+        WTF::move(*scriptString),
+        JSC::SourceTaintedOrigin::Untainted,
+        URL { },
+        WebCore::RunAsAsyncFunction::No,
+        std::nullopt,
+        WebCore::ForceUserGesture::No,
+        RemoveTransientActivation::No
+    }, frameID, world.get(), !!callback, [context, callback] (auto&& result) {
+        if (!callback)
+            return;
+        if (result)
+            callback(toAPI(result->toAPI().get()), nullptr, context);
+        else
+            callback(nullptr, nullptr, context);
+    });
+}
+
 void WKPageEvaluateJavaScriptInFrame(WKPageRef pageRef, WKFrameInfoRef frame, WKStringRef scriptRef, void* context, WKPageEvaluateJavaScriptFunction callback)
 {
     CRASH_IF_SUSPENDED;

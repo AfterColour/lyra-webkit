@@ -243,6 +243,9 @@ WK_EXPORT void WKPageSetResourceLoadClient(WKPageRef page, WKPageResourceLoadCli
 typedef void (*WKPageEvaluateJavaScriptFunction)(WKTypeRef, WKErrorRef, void*);
 WK_EXPORT void WKPageEvaluateJavaScriptInMainFrame(WKPageRef page, WKStringRef script, void* context, WKPageEvaluateJavaScriptFunction function);
 WK_EXPORT void WKPageEvaluateJavaScriptInFrame(WKPageRef page, WKFrameInfoRef frame, WKStringRef script, void* context, WKPageEvaluateJavaScriptFunction function);
+// Lyra (browser extensions): the same in the isolated world named `worldName` (see
+// WKUserScriptCreateWithSourceInWorld); frame null = the main frame.
+WK_EXPORT void WKPageEvaluateJavaScriptInFrameInWorld(WKPageRef page, WKFrameInfoRef frame, WKStringRef script, WKStringRef worldName, void* context, WKPageEvaluateJavaScriptFunction function);
 WK_EXPORT void WKPageCallAsyncJavaScript(WKPageRef page, WKStringRef script, WKDictionaryRef arguments, WKFrameInfoRef frame, void* context, WKPageEvaluateJavaScriptFunction callback);
 WK_EXPORT void WKPageCallAsyncJavaScriptWithoutUserGesture(WKPageRef page, WKStringRef script, WKDictionaryRef arguments, WKFrameInfoRef frame, void* context, WKPageEvaluateJavaScriptFunction callback);
 

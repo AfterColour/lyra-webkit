@@ -500,6 +500,9 @@ public:
     // WebPageProxyIdentifier it does not own over IPC.
     bool allowsWebPageProxyIdentifier(WebCore::ProcessIdentifier, std::optional<WebPageProxyIdentifier>) const;
     void addAllowedWebPageProxyIdentifier(WebCore::ProcessIdentifier, WebPageProxyIdentifier);
+    // Lyra: the UI process decides about each resource load of these pages first (extensions' webRequest).
+    void setLyraResourceLoadInterception(WebPageProxyIdentifier, bool enabled);
+    bool lyraInterceptsResourceLoads(WebPageProxyIdentifier pageID) const { return m_lyraInterceptedPages.contains(pageID); }
 
     void authorizeDownloadForWebProcess(WebCore::ProcessIdentifier, DownloadID, CompletionHandler<void()>&&);
     std::optional<WebCore::ProcessIdentifier> authorizedProcessForDownload(DownloadID) const;
@@ -688,6 +691,7 @@ private:
     HashMap<WebCore::ProcessIdentifier, HashSet<String>> m_pendingAllowedFilePathsByProcess;
     const uint64_t m_cookieHeaderDigestSalt { cryptographicallyRandomNumber<uint64_t>() };
     HashMap<WebCore::ProcessIdentifier, HashSet<WebPageProxyIdentifier>> m_allowedWebPageProxyIdentifiers;
+    HashSet<WebPageProxyIdentifier> m_lyraInterceptedPages;
     HashMap<DownloadID, WebCore::ProcessIdentifier> m_authorizedDownloads;
 
 #if PLATFORM(COCOA)

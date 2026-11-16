@@ -564,6 +564,9 @@ private:
     HashMap<WebCore::WebSocketIdentifier, Ref<NetworkSocketChannel>> m_networkSocketChannels;
     NetworkResourceLoadMap m_networkResourceLoaders;
     HashSet<WebCore::ResourceLoaderIdentifier> m_loadsWaitingForServiceWorkerImport;
+    // Lyra: loads waiting for the UI process's decision, and those decided (scheduled again).
+    HashSet<WebCore::ResourceLoaderIdentifier> m_lyraLoadsWaitingForDecision;
+    HashSet<WebCore::ResourceLoaderIdentifier> m_lyraDecidedLoads;
     Vector<ResourceNetworkActivityTracker> m_networkActivityTrackers;
     HashMap<WebCore::PageIdentifier, NetworkActivityTracker::CompletionCode> m_lastRootActivityCompletionCodesForTesting;
     HashMap<WebCore::FrameIdentifier, LocalNetworkAccessFrameRecord> m_localNetworkAccessFrameRecords;

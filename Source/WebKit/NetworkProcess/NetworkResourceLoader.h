@@ -367,6 +367,7 @@ private:
 
     WebCore::SharedBufferBuilder m_bufferedData;
     unsigned m_redirectCount { 0 };
+    bool m_lyraResponseAsked { false };   // Lyra: extensions saw the response (webRequest onHeadersReceived)
 
     const std::unique_ptr<SynchronousLoadData> m_synchronousLoadData;
     Vector<Ref<WebCore::BlobDataFileReference>> m_fileReferences;

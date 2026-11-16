@@ -1385,8 +1385,58 @@ void NetworkResourceLoader::startPreconnectTaskIgnoringContentRuleLists(NetworkL
 #endif // ENABLE(SERVER_PRECONNECT)
 }
 
+// Lyra: extensions' webRequest after the request is sent: redirects, the response, the end.
+static void lyraHeaderLists(const WebCore::HTTPHeaderMap& map, Vector<String>& names, Vector<String>& values)
+{
+    for (auto& header : map) {
+        names.append(header.key);
+        values.append(header.value);
+    }
+}
+
+static void lyraApplyResponseHeaders(WebCore::ResourceResponse& response, const Vector<String>& names, const Vector<String>& values)
+{
+    if (names.isEmpty())
+        return;
+    WebCore::HTTPHeaderMap map;
+    for (auto& header : response.httpHeaderFields()) {
+        bool removed = false;
+        for (size_t i = 0; i < names.size() && i < values.size(); ++i) {
+            if (values[i].isNull() && equalIgnoringASCIICase(names[i], header.key))
+                removed = true;
+        }
+        if (!removed)
+            map.add(header.key, header.value);
+    }
+    for (size_t i = 0; i < names.size() && i < values.size(); ++i) {
+        if (!values[i].isNull())
+            map.set(names[i], values[i]);
+    }
+    response.setHTTPHeaderFields(WTF::move(map));
+}
+
 void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedResponse, PrivateRelayed privateRelayed, ResponseCompletionHandler&& completionHandler)
 {
+    if (!m_lyraResponseAsked && NetworkProcess::singleton().lyraInterceptsResourceLoads(webPageProxyID())) {
+        m_lyraResponseAsked = true;
+        Vector<String> names, values;
+        lyraHeaderLists(receivedResponse.httpHeaderFields(), names, values);
+        auto url = receivedResponse.url();
+        protect(NetworkProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::LyraResourceLoadEvent(webPageProxyID(), coreIdentifier().toUInt64(), 2, url, receivedResponse.httpStatusCode(), String(), names, values),
+            [weakThis = WeakPtr { *this }, receivedResponse = WTF::move(receivedResponse), privateRelayed, completionHandler = WTF::move(completionHandler)](uint8_t action, String&&, Vector<String>&& setNames, Vector<String>&& setValues) mutable {
+                RefPtr protectedThis = weakThis.get();
+                if (!protectedThis)
+                    return completionHandler(WebCore::PolicyAction::Ignore);
+                if (action == 1) {
+                    completionHandler(WebCore::PolicyAction::Ignore);
+                    protectedThis->didFailLoading(blockedByContentBlockerError(protectedThis->originalRequest()));
+                    return;
+                }
+                lyraApplyResponseHeaders(receivedResponse, setNames, setValues);
+                protectedThis->didReceiveResponse(WTF::move(receivedResponse), privateRelayed, WTF::move(completionHandler));
+            });
+        return;
+    }
 #if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
     if (m_isProcessingResponse) {
         m_deferredMessages.append(DeferredResponse { WTF::move(receivedResponse), privateRelayed, WTF::move(completionHandler) });
@@ -1801,6 +1851,8 @@ void NetworkResourceLoader::didReceiveBuffer(const WebCore::FragmentedSharedBuff
 
 void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& originalNetworkLoadMetrics)
 {
+    if (NetworkProcess::singleton().lyraInterceptsResourceLoads(webPageProxyID()))
+        protect(NetworkProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::LyraResourceLoadEvent(webPageProxyID(), coreIdentifier().toUInt64(), 3, URL { }, 0, String(), { }, { }), [](uint8_t, String&&, Vector<String>&&, Vector<String>&&) { });
 #if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
     if (m_isProcessingResponse) {
         m_deferredMessages.append(originalNetworkLoadMetrics);
@@ -1881,6 +1933,8 @@ void NetworkResourceLoader::didFinishLoading(const NetworkLoadMetrics& originalN
 
 void NetworkResourceLoader::didFailLoading(const ResourceError& error)
 {
+    if (NetworkProcess::singleton().lyraInterceptsResourceLoads(webPageProxyID()))
+        protect(NetworkProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::LyraResourceLoadEvent(webPageProxyID(), coreIdentifier().toUInt64(), 4, URL { }, 0, error.isCancellation() ? "net::ERR_ABORTED"_s : error.localizedDescription(), { }, { }), [](uint8_t, String&&, Vector<String>&&, Vector<String>&&) { });
 #if HAVE(BROKEN_MULTIPART_RESPONSE_FLOW_CONTROL)
     if (m_isProcessingResponse) {
         m_deferredMessages.append(error);
@@ -1958,6 +2012,24 @@ std::optional<Seconds> NetworkResourceLoader::validateCacheEntryForMaxAgeCapVali
 
 void NetworkResourceLoader::willSendRedirectedRequest(ResourceRequest&& request, ResourceRequest&& redirectRequest, ResourceResponse&& redirectResponse, CompletionHandler<void(WebCore::ResourceRequest&&)>&& completionHandler)
 {
+    if (NetworkProcess::singleton().lyraInterceptsResourceLoads(webPageProxyID())) {
+        Vector<String> names, values;
+        lyraHeaderLists(redirectResponse.httpHeaderFields(), names, values);
+        auto url = redirectRequest.url();
+        protect(NetworkProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::LyraResourceLoadEvent(webPageProxyID(), coreIdentifier().toUInt64(), 1, url, redirectResponse.httpStatusCode(), String(), names, values),
+            [weakThis = WeakPtr { *this }, request = WTF::move(request), redirectRequest = WTF::move(redirectRequest), redirectResponse = WTF::move(redirectResponse), completionHandler = WTF::move(completionHandler)](uint8_t action, String&& redirectURL, Vector<String>&&, Vector<String>&&) mutable {
+                RefPtr protectedThis = weakThis.get();
+                if (!protectedThis || action == 1)
+                    return completionHandler({ });   // cancelled: the load fails
+                if (action == 2 && !redirectURL.isEmpty()) {
+                    URL target { redirectURL };
+                    if (target.isValid() && target.protocolIsInHTTPFamily())
+                        redirectRequest.setURL(WTF::move(target));
+                }
+                protectedThis->willSendRedirectedRequestInternal(WTF::move(request), WTF::move(redirectRequest), WTF::move(redirectResponse), IsFromServiceWorker::No, WTF::move(completionHandler));
+            });
+        return;
+    }
     willSendRedirectedRequestInternal(WTF::move(request), WTF::move(redirectRequest), WTF::move(redirectResponse), IsFromServiceWorker::No, WTF::move(completionHandler));
 }
 

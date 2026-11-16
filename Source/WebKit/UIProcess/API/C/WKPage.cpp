@@ -28,6 +28,7 @@
 #include "WKPagePrivate.h"
 
 #include "APIArray.h"
+#include <wtf/text/Base64.h>
 #include "APICompletionListener.h"
 #include "APIContentWorld.h"
 #include "APIContextMenuClient.h"
@@ -3774,4 +3775,95 @@ void WKPageSetCursorDidChangeCallbackForTesting(WKPageRef page, WKPageCursorDidC
 #endif
         callback(toAPI(info.toString()), clientInfo);
     });
+}
+
+
+// Lyra: extensions' webRequest.
+struct LyraResourceLoadDecisionHolder {
+    WebKit::WebPageProxy::LyraResourceLoadDecision decision;
+};
+
+void WKPageSetResourceLoadDecider(WKPageRef page, WKPageDecideResourceLoadCallback callback, const void* context)
+{
+    if (!callback) {
+        protect(toImpl(page))->setLyraResourceLoadDecider({ });
+        protect(toImpl(page))->m_lyraResourceLoadEventHandler = nullptr;
+        return;
+    }
+    protect(toImpl(page))->m_lyraResourceLoadEventHandler = [page, callback, context](WebKit::WebPageProxy::LyraResourceLoadEvent&& event, WebKit::WebPageProxy::LyraResourceLoadDecision&& decision) {
+        static constexpr ASCIILiteral names[] = { "request"_s, "redirect"_s, "response"_s, "finished"_s, "failed"_s };
+        API::Dictionary::MapType headers;
+        for (size_t i = 0; i < event.headerNames.size() && i < event.headerValues.size(); ++i)
+            headers.set(event.headerNames[i], API::String::create(event.headerValues[i]));
+        API::Dictionary::MapType map;
+        map.set("event"_s, API::String::create(String(event.event < 5 ? names[event.event] : "request"_s)));
+        map.set("loadId"_s, API::UInt64::create(event.loadID));
+        map.set("url"_s, API::String::create(event.url.string()));
+        map.set("statusCode"_s, API::UInt64::create(static_cast<uint64_t>(std::max(0, event.statusCode))));
+        map.set("error"_s, API::String::create(event.error));
+        map.set("headers"_s, API::Dictionary::create(WTF::move(headers)));
+        Ref<API::Dictionary> info = API::Dictionary::create(WTF::move(map));
+        auto* holder = new LyraResourceLoadDecisionHolder { WTF::move(decision) };
+        callback(page, toAPI(info.ptr()), reinterpret_cast<WKResourceLoadDecisionRef>(holder), context);
+    };
+    protect(toImpl(page))->setLyraResourceLoadDecider([page, callback, context](WebKit::WebPageProxy::LyraResourceLoadRequest&& request, WebKit::WebPageProxy::LyraResourceLoadDecision&& decision) {
+        API::Dictionary::MapType headers;
+        for (size_t i = 0; i < request.headerNames.size() && i < request.headerValues.size(); ++i)
+            headers.set(request.headerNames[i], API::String::create(request.headerValues[i]));
+        API::Dictionary::MapType map;
+        map.set("event"_s, API::String::create("request"_s));
+        map.set("loadId"_s, API::UInt64::create(request.loadID));
+        map.set("url"_s, API::String::create(request.url.string()));
+        map.set("method"_s, API::String::create(request.method));
+        map.set("type"_s, API::String::create(request.type));
+        map.set("initiator"_s, API::String::create(request.initiator));
+        map.set("frameId"_s, API::UInt64::create(request.frameID));
+        map.set("mainFrame"_s, API::Boolean::create(request.mainFrame));
+        map.set("headers"_s, API::Dictionary::create(WTF::move(headers)));
+        Ref<API::Dictionary> info = API::Dictionary::create(WTF::move(map));
+        auto* holder = new LyraResourceLoadDecisionHolder { WTF::move(decision) };
+        callback(page, toAPI(info.ptr()), reinterpret_cast<WKResourceLoadDecisionRef>(holder), context);
+    });
+}
+
+void WKResourceLoadDecisionComplete(WKResourceLoadDecisionRef decision, int action, WKStringRef redirectURL, WKArrayRef headerNames, WKArrayRef headerValues)
+{
+    std::unique_ptr<LyraResourceLoadDecisionHolder> holder(reinterpret_cast<LyraResourceLoadDecisionHolder*>(decision));
+    if (!holder)
+        return;
+    Vector<String> names, values;
+    if (headerNames && headerValues) {
+        RefPtr namesArray = toImpl(headerNames);
+        RefPtr valuesArray = toImpl(headerValues);
+        for (size_t i = 0; i < namesArray->size() && i < valuesArray->size(); ++i) {
+            RefPtr name = namesArray->at<API::String>(i);
+            if (!name)
+                continue;
+            names.append(name->string());
+            RefPtr value = valuesArray->at<API::String>(i);
+            values.append(value ? value->string() : String());
+        }
+    }
+    holder->decision(static_cast<uint8_t>(action), redirectURL ? toImpl(redirectURL)->string() : String(), WTF::move(names), WTF::move(values), String());
+}
+
+void WKResourceLoadDecisionRespond(WKResourceLoadDecisionRef decision, WKStringRef mimeType, const char* data, size_t length)
+{
+    std::unique_ptr<LyraResourceLoadDecisionHolder> holder(reinterpret_cast<LyraResourceLoadDecisionHolder*>(decision));
+    if (!holder)
+        return;
+    String body = data && length ? base64EncodeToString(std::span { reinterpret_cast<const uint8_t*>(data), length }) : String();
+    holder->decision(3, mimeType ? toImpl(mimeType)->string() : String(), { }, { }, WTF::move(body));
+}
+
+void WKPageInjectUserStyleSheet(WKPageRef page, WKStringRef source, bool allFrames)
+{
+    if (!source)
+        return;
+    protect(toImpl(page))->lyraInjectUserStyleSheet(toImpl(source)->string(), allFrames);
+}
+
+void WKPageRemoveInjectedUserStyleSheets(WKPageRef page)
+{
+    protect(toImpl(page))->lyraRemoveInjectedUserStyleSheets();
 }

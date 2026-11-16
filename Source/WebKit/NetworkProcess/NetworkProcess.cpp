@@ -577,6 +577,14 @@ bool NetworkProcess::allowsFirstPartySite(WebCore::ProcessIdentifier processIden
     return iterator->value.sites.contains(site);
 }
 
+void NetworkProcess::setLyraResourceLoadInterception(WebPageProxyIdentifier pageID, bool enabled)
+{
+    if (enabled)
+        m_lyraInterceptedPages.add(pageID);
+    else
+        m_lyraInterceptedPages.remove(pageID);
+}
+
 void NetworkProcess::addAllowedWebPageProxyIdentifier(WebCore::ProcessIdentifier processIdentifier, WebPageProxyIdentifier pageID)
 {
     m_allowedWebPageProxyIdentifiers.ensure(processIdentifier, [] {

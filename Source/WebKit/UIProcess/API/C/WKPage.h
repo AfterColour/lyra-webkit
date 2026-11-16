@@ -288,6 +288,23 @@ WK_EXPORT void WKPageClearNotificationPermissionState(WKPageRef page);
 
 WK_EXPORT void WKPageClearBackForwardCache(WKPageRef page);
 
+/* Lyra: extensions' webRequest. With a callback set, every resource load of the page waits for a
+   decision: the callback gets the request (url, method, type, initiator, frameId, mainFrame,
+   headers) and must call WKResourceLoadDecisionComplete exactly once, on the main thread.
+   action: 0 go on, 1 cancel, 2 go to redirectURL (http/https). The same callback then gets the load's
+   events (request["event"]: redirect, response, finished, failed; "loadId" ties them): complete each
+   (a redirect may be cancelled or sent elsewhere, a response cancelled or its headers changed). headerNames/headerValues: headers to
+   set; a value that is not a string (WKBoolean false) removes the header. NULL callback: off. */
+typedef struct OpaqueWKResourceLoadDecision* WKResourceLoadDecisionRef;
+typedef void (*WKPageDecideResourceLoadCallback)(WKPageRef page, WKDictionaryRef request, WKResourceLoadDecisionRef decision, const void* context);
+WK_EXPORT void WKPageSetResourceLoadDecider(WKPageRef page, WKPageDecideResourceLoadCallback callback, const void* context);
+WK_EXPORT void WKResourceLoadDecisionComplete(WKResourceLoadDecisionRef decision, int action, WKStringRef redirectURL, WKArrayRef headerNames, WKArrayRef headerValues);
+/* Answers the load itself: these bytes as the response (200, mimeType), never reaching the network. */
+WK_EXPORT void WKResourceLoadDecisionRespond(WKResourceLoadDecisionRef decision, WKStringRef mimeType, const char* data, size_t length);
+/* Lyra: a style sheet of the user's level for this page (its top frame or all frames), until removed. */
+WK_EXPORT void WKPageInjectUserStyleSheet(WKPageRef page, WKStringRef source, bool allFrames);
+WK_EXPORT void WKPageRemoveInjectedUserStyleSheets(WKPageRef page);
+
 #ifdef __cplusplus
 }
 #endif

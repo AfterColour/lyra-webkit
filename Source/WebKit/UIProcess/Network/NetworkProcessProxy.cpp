@@ -654,6 +654,24 @@ void NetworkProcessProxy::didNegotiateModernTLS(WebPageProxyIdentifier pageID, c
         page->didNegotiateModernTLS(url);
 }
 
+void NetworkProcessProxy::lyraResourceLoadEvent(WebPageProxyIdentifier pageID, uint64_t loadID, uint8_t event, URL&& url, int statusCode, String&& error, Vector<String>&& headerNames, Vector<String>&& headerValues, CompletionHandler<void(uint8_t, String&&, Vector<String>&&, Vector<String>&&)>&& completionHandler)
+{
+    RefPtr page = WebProcessProxy::webPage(pageID);
+    if (!page)
+        return completionHandler(0, { }, { }, { });
+    page->lyraResourceLoadEvent({ loadID, event, WTF::move(url), statusCode, WTF::move(error), WTF::move(headerNames), WTF::move(headerValues) }, [completionHandler = WTF::move(completionHandler)](uint8_t action, String&& redirectURL, Vector<String>&& names, Vector<String>&& values, String&&) mutable {
+        completionHandler(action, WTF::move(redirectURL), WTF::move(names), WTF::move(values));
+    });
+}
+
+void NetworkProcessProxy::lyraDecideResourceLoad(WebPageProxyIdentifier pageID, uint64_t loadID, uint64_t frameID, bool mainFrame, URL&& url, String&& method, String&& type, String&& initiator, Vector<String>&& headerNames, Vector<String>&& headerValues, CompletionHandler<void(uint8_t, String&&, Vector<String>&&, Vector<String>&&, String&&)>&& completionHandler)
+{
+    RefPtr page = WebProcessProxy::webPage(pageID);
+    if (!page)
+        return completionHandler(0, { }, { }, { }, { });
+    page->lyraDecideResourceLoad({ loadID, frameID, mainFrame, WTF::move(url), WTF::move(method), WTF::move(type), WTF::move(initiator), WTF::move(headerNames), WTF::move(headerValues) }, WTF::move(completionHandler));
+}
+
 void NetworkProcessProxy::didBlockLoadToKnownTracker(WebPageProxyIdentifier pageID, const URL& url)
 {
     if (RefPtr page = WebProcessProxy::webPage(pageID))

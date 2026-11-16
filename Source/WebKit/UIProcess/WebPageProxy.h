@@ -83,6 +83,7 @@
 
 namespace API {
 class Attachment;
+class UserStyleSheet;
 class ContentWorld;
 class ContextMenuClient;
 class Data;
@@ -2264,6 +2265,20 @@ public:
     void didNegotiateModernTLS(const URL&);
 
     void didBlockLoadToKnownTracker(const URL&);
+    // Lyra: extensions' webRequest. With a decider set, every resource load of this page waits for it.
+    struct LyraResourceLoadEvent { uint64_t loadID { 0 }; uint8_t event { 0 }; URL url; int statusCode { 0 }; String error; Vector<String> headerNames, headerValues; };
+    struct LyraResourceLoadRequest { uint64_t loadID { 0 }; uint64_t frameID { 0 }; bool mainFrame { false }; URL url; String method, type, initiator; Vector<String> headerNames, headerValues; };
+    using LyraResourceLoadDecision = CompletionHandler<void(uint8_t action, String&& redirectURL, Vector<String>&& headerNames, Vector<String>&& headerValues, String&& bodyBase64)>;
+    // Lyra: style sheets of the user's level (extensions' insertCSS with cssOrigin "user") for this page only.
+    void lyraInjectUserStyleSheet(const String& source, bool allFrames);
+    void lyraRemoveInjectedUserStyleSheets();
+    Vector<Ref<API::UserStyleSheet>> m_lyraUserStyleSheets;
+    void setLyraResourceLoadDecider(Function<void(LyraResourceLoadRequest&&, LyraResourceLoadDecision&&)>&&);
+    void lyraDecideResourceLoad(LyraResourceLoadRequest&&, LyraResourceLoadDecision&&);
+    // event: 1 redirect (url: where to), 2 response (its headers; may change them or cancel), 3 finished, 4 failed.
+    void lyraResourceLoadEvent(LyraResourceLoadEvent&&, LyraResourceLoadDecision&&);
+    Function<void(LyraResourceLoadEvent&&, LyraResourceLoadDecision&&)> m_lyraResourceLoadEventHandler;
+    Function<void(LyraResourceLoadRequest&&, LyraResourceLoadDecision&&)> m_lyraResourceLoadDecider;
     void didApplyLinkDecorationFiltering(const URL&, const URL&);
 
     SpellDocumentTag spellDocumentTag();

@@ -62,6 +62,10 @@
 #include "RemoteWorkerType.h"
 #include "ServiceWorkerFetchTaskMessages.h"
 #include "WebErrors.h"
+#include "WebResourceLoaderMessages.h"
+#include "SharedBufferReference.h"
+#include <WebCore/SharedBuffer.h>
+#include <wtf/text/Base64.h>
 #include "WebPreferencesDefaultValues.h"
 #include "WebProcessMessages.h"
 #include "WebProcessPoolMessages.h"
@@ -614,6 +618,25 @@ RefPtr<ServiceWorkerFetchTask> NetworkConnectionToWebProcess::createFetchTask(Ne
     return swConnection ? swConnection->createFetchTask(loader, request) : nullptr;
 }
 
+// Lyra: the resource type as Chrome's webRequest names it.
+static ASCIILiteral lyraResourceType(const NetworkResourceLoadParameters& parameters)
+{
+    using D = WebCore::FetchOptions::Destination;
+    switch (parameters.options.destination) {
+    case D::Document: return parameters.isMainFrameNavigation ? "main_frame"_s : "sub_frame"_s;
+    case D::Iframe: return "sub_frame"_s;
+    case D::Script: case D::Serviceworker: case D::Sharedworker: case D::Worker: case D::Audioworklet: case D::Paintworklet: return "script"_s;
+    case D::Style: case D::Xslt: return "stylesheet"_s;
+    case D::Image: return "image"_s;
+    case D::Font: return "font"_s;
+    case D::Audio: case D::Video: case D::Track: return "media"_s;
+    case D::Object: case D::Embed: return "object"_s;
+    case D::Report: return "csp_report"_s;
+    case D::EmptyString: case D::Json: case D::Text: case D::Manifest: return "xmlhttprequest"_s;
+    default: return "other"_s;
+    }
+}
+
 void NetworkConnectionToWebProcess::scheduleResourceLoad(NetworkResourceLoadParameters&& loadParameters, std::optional<NetworkResourceLoadIdentifier> existingLoaderToResume)
 {
     bool allowCookieAccess = NetworkProcess::singleton().allowsFirstPartyForCookies(m_webProcessIdentifier, loadParameters.request.firstPartyForCookies());
@@ -654,6 +677,62 @@ void NetworkConnectionToWebProcess::scheduleResourceLoad(NetworkResourceLoadPara
 
     RELEASE_ASSERT(RunLoop::isMain());
     ASSERT(!m_networkResourceLoaders.contains(*identifier));
+
+    // Lyra: extensions decide first (webRequest): go on, cancel, go elsewhere, change the headers.
+    if (!existingLoaderToResume && !m_lyraDecidedLoads.remove(*identifier) && NetworkProcess::singleton().lyraInterceptsResourceLoads(loadParameters.webPageProxyID)) {
+        m_lyraLoadsWaitingForDecision.add(*identifier);
+        Vector<String> names, values;
+        for (auto& header : loadParameters.request.httpHeaderFields()) {
+            names.append(header.key);
+            values.append(header.value);
+        }
+        auto url = loadParameters.request.url();
+        auto method = loadParameters.request.httpMethod();
+        String initiator = loadParameters.sourceOrigin ? loadParameters.sourceOrigin->toString() : String();
+        String type = lyraResourceType(loadParameters);
+        protect(NetworkProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::LyraDecideResourceLoad(loadParameters.webPageProxyID, identifier->toUInt64(), loadParameters.webFrameID.toUInt64(), loadParameters.isMainFrameNavigation, url, method, type, initiator, names, values),
+            [this, protectedThis = Ref { *this }, identifier = *identifier, loadParameters = WTF::move(loadParameters)](uint8_t action, String&& redirectURL, Vector<String>&& setNames, Vector<String>&& setValues, String&& bodyBase64) mutable {
+                if (!m_lyraLoadsWaitingForDecision.remove(identifier))
+                    return; // the page dropped it meanwhile
+                if (!NetworkProcess::singleton().webProcessConnection(webProcessIdentifier()))
+                    return;
+                if (action == 1) {
+                    protect(m_connection)->send(Messages::WebResourceLoader::DidFailResourceLoad(blockedByContentBlockerError(loadParameters.request)), identifier.toUInt64());
+                    return;
+                }
+                if (action == 3) {
+                    // Answered with the extension's own bytes (a neutered script, a blank image...).
+                    auto data = base64Decode(bodyBase64);
+                    const size_t size = data ? data->size() : 0;
+                    WebCore::ResourceResponse response { URL { loadParameters.request.url() }, redirectURL.isEmpty() ? "application/octet-stream"_s : redirectURL, static_cast<long long>(size), String { } };
+                    response.setHTTPStatusCode(200);
+                    response.setHTTPStatusText("OK"_s);
+                    response.setHTTPHeaderField(WebCore::HTTPHeaderName::ContentType, redirectURL);
+                    response.setHTTPHeaderField(WebCore::HTTPHeaderName::AccessControlAllowOrigin, "*"_s);
+                    Ref connection = m_connection;
+                    const uint64_t destination = identifier.toUInt64();
+                    connection->send(Messages::WebResourceLoader::DidReceiveResponse(response, PrivateRelayed::No, false, std::nullopt), destination);
+                    if (size)
+                        connection->send(Messages::WebResourceLoader::DidReceiveData(IPC::SharedBufferReference(WebCore::SharedBuffer::create(WTF::move(*data))), size), destination);
+                    connection->send(Messages::WebResourceLoader::DidFinishResourceLoad(WebCore::NetworkLoadMetrics { }), destination);
+                    return;
+                }
+                if (action == 2 && !redirectURL.isEmpty()) {
+                    URL target { redirectURL };
+                    if (target.isValid() && target.protocolIsInHTTPFamily())
+                        loadParameters.request.setURL(WTF::move(target));
+                }
+                for (size_t i = 0; i < setNames.size() && i < setValues.size(); ++i) {
+                    if (setValues[i].isNull())
+                        loadParameters.request.removeHTTPHeaderField(setNames[i]);
+                    else
+                        loadParameters.request.setHTTPHeaderField(setNames[i], setValues[i]);
+                }
+                m_lyraDecidedLoads.add(identifier);
+                scheduleResourceLoad(WTF::move(loadParameters), std::nullopt);
+            });
+        return;
+    }
 
     if (existingLoaderToResume) {
         if (CheckedPtr session = networkSession()) {
@@ -768,6 +847,8 @@ void NetworkConnectionToWebProcess::removeLoadIdentifier(WebCore::ResourceLoader
         CONNECTION_RELEASE_LOG(Loading, "removeLoadIdentifier: Removing identifier %" PRIu64 " of a resource load waiting for service worker registrations to be imported", identifier.toUInt64());
         return;
     }
+    if (m_lyraLoadsWaitingForDecision.remove(identifier))
+        return;
 
     RefPtr<NetworkResourceLoader> loader = m_networkResourceLoaders.get(identifier);
 

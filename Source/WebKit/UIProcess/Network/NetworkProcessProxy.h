@@ -435,6 +435,8 @@ private:
     void negotiatedLegacyTLS(WebPageProxyIdentifier);
     void didNegotiateModernTLS(WebPageProxyIdentifier, const URL&);
     void didBlockLoadToKnownTracker(WebPageProxyIdentifier, const URL&);
+    void lyraResourceLoadEvent(WebPageProxyIdentifier, uint64_t loadID, uint8_t event, URL&&, int statusCode, String&& error, Vector<String>&& headerNames, Vector<String>&& headerValues, CompletionHandler<void(uint8_t, String&&, Vector<String>&&, Vector<String>&&)>&&);
+    void lyraDecideResourceLoad(WebPageProxyIdentifier, uint64_t loadID, uint64_t frameID, bool mainFrame, URL&&, String&& method, String&& type, String&& initiator, Vector<String>&& headerNames, Vector<String>&& headerValues, CompletionHandler<void(uint8_t, String&&, Vector<String>&&, Vector<String>&&, String&&)>&&);
     void setWebProcessHasUploads(WebCore::ProcessIdentifier, bool);
     void logDiagnosticMessage(WebPageProxyIdentifier, const String& message, const String& description, WebCore::ShouldSample);
     void logDiagnosticMessageWithResult(WebPageProxyIdentifier, const String& message, const String& description, uint32_t result, WebCore::ShouldSample);

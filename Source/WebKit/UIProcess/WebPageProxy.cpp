@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "WebPageProxy.h"
+#include "APIUserStyleSheet.h"
 
 #include "APIArray.h"
 #include "APIAttachment.h"
@@ -17415,6 +17416,42 @@ void WebPageProxy::negotiatedLegacyTLS()
 void WebPageProxy::didNegotiateModernTLS(const URL& url)
 {
     m_navigationClient->didNegotiateModernTLS(url);
+}
+
+void WebPageProxy::setLyraResourceLoadDecider(Function<void(LyraResourceLoadRequest&&, LyraResourceLoadDecision&&)>&& decider)
+{
+    const bool enabled = !!decider;
+    m_lyraResourceLoadDecider = WTF::move(decider);
+    protect(protect(websiteDataStore())->networkProcess())->send(Messages::NetworkProcess::SetLyraResourceLoadInterception(identifier(), enabled), 0);
+}
+
+void WebPageProxy::lyraDecideResourceLoad(LyraResourceLoadRequest&& request, LyraResourceLoadDecision&& decision)
+{
+    if (!m_lyraResourceLoadDecider)
+        return decision(0, { }, { }, { }, { });
+    m_lyraResourceLoadDecider(WTF::move(request), WTF::move(decision));
+}
+
+void WebPageProxy::lyraResourceLoadEvent(LyraResourceLoadEvent&& event, LyraResourceLoadDecision&& decision)
+{
+    if (!m_lyraResourceLoadEventHandler)
+        return decision(0, { }, { }, { }, { });
+    m_lyraResourceLoadEventHandler(WTF::move(event), WTF::move(decision));
+}
+
+void WebPageProxy::lyraInjectUserStyleSheet(const String& source, bool allFrames)
+{
+    WebCore::UserStyleSheet sheet { source, URL { }, { }, { }, allFrames ? WebCore::UserContentInjectedFrames::InjectInAllFrames : WebCore::UserContentInjectedFrames::InjectInTopFrameOnly,
+        WebCore::UserContentMatchParentFrame::Never, WebCore::UserStyleLevel::User, webPageIDInMainFrameProcess(), false };
+    Ref apiSheet = API::UserStyleSheet::create(WTF::move(sheet), API::ContentWorld::pageContentWorldSingleton());
+    protect(userContentController())->addUserStyleSheet(apiSheet);
+    m_lyraUserStyleSheets.append(WTF::move(apiSheet));
+}
+
+void WebPageProxy::lyraRemoveInjectedUserStyleSheets()
+{
+    for (auto& sheet : std::exchange(m_lyraUserStyleSheets, { }))
+        protect(userContentController())->removeUserStyleSheet(sheet);
 }
 
 void WebPageProxy::didBlockLoadToKnownTracker(const URL& url)

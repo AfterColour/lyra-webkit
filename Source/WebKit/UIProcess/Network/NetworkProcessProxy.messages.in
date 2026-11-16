@@ -31,6 +31,8 @@ messages -> NetworkProcessProxy WantsDispatchMessage {
     DidNegotiateModernTLS(WebKit::WebPageProxyIdentifier pageID, URL url)
 
     DidBlockLoadToKnownTracker(WebKit::WebPageProxyIdentifier pageID, URL url)
+    LyraResourceLoadEvent(WebKit::WebPageProxyIdentifier pageID, uint64_t loadID, uint8_t event, URL url, int statusCode, String error, Vector<String> headerNames, Vector<String> headerValues) -> (uint8_t action, String redirectURL, Vector<String> headerNames, Vector<String> headerValues)
+    LyraDecideResourceLoad(WebKit::WebPageProxyIdentifier pageID, uint64_t loadID, uint64_t frameID, bool mainFrame, URL url, String method, String type, String initiator, Vector<String> headerNames, Vector<String> headerValues) -> (uint8_t action, String redirectURL, Vector<String> headerNames, Vector<String> headerValues, String bodyBase64)
 
     TestProcessIncomingSyncMessagesWhenWaitingForSyncReply(WebKit::WebPageProxyIdentifier pageID) -> (bool handled) Synchronous
     ProcessHasUnresponseServiceWorker(WebCore::ProcessIdentifier processIdentifier)

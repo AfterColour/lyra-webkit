@@ -565,7 +565,11 @@ void CurlHandle::enableAltSvc()
 
     long altSvcCtrl = CURLALTSVC_H1;
     altSvcCtrl |= CurlContext::singleton().isHttp2Enabled() ? CURLALTSVC_H2 : 0;
-    altSvcCtrl |= CurlContext::singleton().isHttp3Enabled() ? CURLALTSVC_H3 : 0;
+    // Lyra: not HTTP/3 through a proxy. libcurl would first ask the proxy for a UDP tunnel
+    // (MASQUE), which the local proxies of VPN clients do not have: a wasted round trip to the
+    // proxy for every site that offers HTTP/3, before the ordinary CONNECT.
+    if (CurlContext::singleton().proxySettings().mode() != CurlProxySettings::Mode::Custom)
+        altSvcCtrl |= CurlContext::singleton().isHttp3Enabled() ? CURLALTSVC_H3 : 0;
 
     curl_easy_setopt(m_handle, CURLOPT_ALTSVC, CurlContext::singleton().alternativeServicesStorageFile().utf8().legacyCStringPointer());
     curl_easy_setopt(m_handle, CURLOPT_ALTSVC_CTRL, altSvcCtrl);

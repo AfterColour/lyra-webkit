@@ -232,6 +232,15 @@ file(COPY ${iconFiles} DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKit.reso
 
 configure_file(page/QuirkTable.json ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKit.resources/quirks/QuirkTable.json COPYONLY)
 
+if (ENABLE_PDFJS)
+    # Lyra: the PDF.js viewer as files (GTK/WPE use GResources), served by
+    # ResourceLoader::loadPDFJSResourceFromBundle() as webkit-pdfjs-viewer://pdfjs/...
+    file(COPY "${THIRDPARTY_DIR}/pdfjs/build" "${THIRDPARTY_DIR}/pdfjs/web"
+        DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKit.resources/pdfjs)
+    file(COPY "${WEBCORE_DIR}/Modules/pdfjs-extras/content-script.js" "${WEBCORE_DIR}/Modules/pdfjs-extras/adwaita"
+        DESTINATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKit.resources/pdfjs/extras)
+endif ()
+
 file(COPY ${ModernMediaControlsImageFiles}
     DESTINATION
     ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/WebKit.resources/media-controls

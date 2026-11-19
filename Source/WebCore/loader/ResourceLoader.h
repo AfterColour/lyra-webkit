@@ -235,6 +235,9 @@ private:
 #if USE(SOUP)
     void loadGResource();
 #endif
+#if ENABLE(PDFJS) && PLATFORM(WIN)
+    void loadPDFJSResourceFromBundle();
+#endif
 
     ResourceRequest m_request;
     ResourceRequest m_originalRequest; // Before redirects.

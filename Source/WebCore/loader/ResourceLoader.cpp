@@ -68,6 +68,13 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
 #include <wtf/text/MakeString.h>
+#if ENABLE(PDFJS) && PLATFORM(WIN)
+#include "SharedBuffer.h"
+#include "WebCoreBundleWin.h"
+#include "MediaTraceWin.h"
+#include <wtf/FileSystem.h>
+#include <wtf/RunLoop.h>
+#endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
 #include "UserContentController.h"
@@ -262,6 +269,12 @@ void ResourceLoader::start()
 #if USE(SOUP)
     if (m_request.url().protocolIs("resource"_s) || isPDFJSResourceLoad()) {
         loadGResource();
+        return;
+    }
+#endif
+#if ENABLE(PDFJS) && PLATFORM(WIN)
+    if (isPDFJSResourceLoad()) {
+        loadPDFJSResourceFromBundle();
         return;
     }
 #endif
@@ -952,6 +965,58 @@ void ResourceLoader::unschedule(SchedulePair& pair)
 bool ResourceLoader::isQuickLookResource() const
 {
     return !!m_previewLoader;
+}
+#endif
+
+#if ENABLE(PDFJS) && PLATFORM(WIN)
+// Lyra: on Windows the PDF.js viewer files live in WebKit.resources\pdfjs next to WebKit.dll
+// (GTK and WPE compile them into GResources instead).
+static ASCIILiteral pdfJSContentType(StringView path)
+{
+    size_t dot = path.reverseFind('.');
+    auto ext = dot == notFound ? StringView() : path.substring(dot + 1);
+    static constexpr std::pair<ASCIILiteral, ASCIILiteral> types[] = {
+        { "html"_s, "text/html"_s }, { "css"_s, "text/css"_s }, { "js"_s, "text/javascript"_s },
+        { "mjs"_s, "text/javascript"_s }, { "json"_s, "application/json"_s }, { "svg"_s, "image/svg+xml"_s },
+        { "png"_s, "image/png"_s }, { "gif"_s, "image/gif"_s }, { "ttf"_s, "font/ttf"_s },
+        { "pfb"_s, "application/x-font-type1"_s }, { "wasm"_s, "application/wasm"_s }, { "ftl"_s, "text/plain"_s },
+    };
+    for (auto& [extension, type] : types) {
+        if (equalIgnoringASCIICase(ext, extension))
+            return type;
+    }
+    return "application/octet-stream"_s;
+}
+
+void ResourceLoader::loadPDFJSResourceFromBundle()
+{
+    // Answer asynchronously, like a network load: start() must return before the response arrives.
+    RunLoop::mainSingleton().dispatch([protectedThis = Ref { *this }] {
+        Ref loader = protectedThis;
+        if (loader->reachedTerminalState() || loader->wasCancelled())
+            return;
+
+        URL url = loader->m_request.url();
+        String path = url.path().toString();
+        std::optional<Vector<uint8_t>> data;
+        if (path.length() > 1 && !path.contains(".."_s) && !path.contains('%') && !path.contains('\\') && !path.contains(':'))
+            data = FileSystem::readEntireFile(webKitBundlePath(makeStringByReplacingAll(makeString("pdfjs"_s, path), '/', '\\')));
+        MEDIA_TRACE("pdfjs %s -> %d bytes", path.utf8().data(), data ? static_cast<int>(data->size()) : -1);
+        if (!data) {
+            loader->didFail(ResourceError(errorDomainWebKitInternal, 404, url, "PDF.js resource not found"_s));
+            return;
+        }
+
+        String contentType = pdfJSContentType(path);
+        auto size = static_cast<long long>(data->size());
+        String charset = contentType.startsWith("text/"_s) || contentType == "application/json"_s ? String("UTF-8"_s) : String();
+        ResourceResponse response { WTF::move(url), String(contentType), size, WTF::move(charset) };
+        response.setHTTPStatusCode(200);
+        response.setHTTPStatusText("OK"_s);
+        response.setHTTPHeaderField(HTTPHeaderName::ContentType, contentType);
+        response.setSource(ResourceResponse::Source::Network);
+        loader->deliverResponseAndData(WTF::move(response), SharedBuffer::create(WTF::move(*data)));
+    });
 }
 #endif
 

@@ -4809,7 +4809,7 @@ PDFJSViewerEnabled:
   defaultValue:
     default: false
     WebKit:
-      "PLATFORM(GTK) || PLATFORM(WPE)": true
+      "PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)": true
       default: false
   disableInLockdownMode: true
 

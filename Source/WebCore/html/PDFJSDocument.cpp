@@ -25,6 +25,12 @@
 #include "config.h"
 #include "PDFJSDocument.h"
 
+#if PLATFORM(WIN)
+#include "MediaTraceWin.h"
+#else
+#define MEDIA_TRACE(...) do { } while (0)
+#endif
+
 #if ENABLE(PDFJS)
 
 #include "DocumentLoader.h"
@@ -220,6 +226,7 @@ void PDFJSDocument::sendPDFArrayBuffer()
             auto& vm = globalObject()->vm();
             JSC::JSLockHolder lock(vm);
             auto* dataObject = JSC::JSArrayBuffer::create(vm, globalObject()->arrayBufferStructure(arrayBuffer->sharingMode()), WTF::move(arrayBuffer));
+            MEDIA_TRACE("pdfjs open-pdf posted, %d bytes", static_cast<int>(dataObject->impl()->byteLength()));
             postMessageToIframe("open-pdf"_s, dataObject);
         }
     }
@@ -248,7 +255,7 @@ void PDFJSDocument::injectStyleAndContentScript()
     link->setAttribute(relAttr, "stylesheet"_s);
 #if PLATFORM(COCOA)
     link->setAttribute(hrefAttr, "webkit-pdfjs-viewer://pdfjs/extras/cocoa/style.css"_s);
-#elif PLATFORM(GTK) || PLATFORM(WPE)
+#elif PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
     link->setAttribute(hrefAttr, "webkit-pdfjs-viewer://pdfjs/extras/adwaita/style.css"_s);
 #endif
     contentDocument->head()->appendChild(link);

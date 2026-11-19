@@ -68,6 +68,11 @@ void WKViewSetUsesOffscreenRendering(WKViewRef viewRef, bool enabled)
     toImpl(viewRef)->setUsesOffscreenRendering(enabled);
 }
 
+void WKViewSetUseDarkAppearance(WKViewRef viewRef, bool useDarkAppearance)
+{
+    toImpl(viewRef)->setUseDarkAppearance(useDarkAppearance);
+}
+
 void WKViewSetScrollOffsetOnNextResize(WKViewRef viewRef, WKSize scrollOffset)
 {
     toImpl(viewRef)->setScrollOffsetOnNextResize(toIntSize(scrollOffset));

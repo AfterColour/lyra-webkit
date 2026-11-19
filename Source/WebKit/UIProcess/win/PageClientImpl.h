@@ -152,6 +152,7 @@ private:
     void didChangeBackgroundColor() override;
     void isPlayingAudioWillChange() override;
     void isPlayingAudioDidChange() override;
+    bool effectiveAppearanceIsDark() const override;
 
     void refView() override;
     void derefView() override;

@@ -971,6 +971,15 @@ void WebView::setUsesOffscreenRendering(bool enabled)
     m_usesOffscreenRendering = enabled;
 }
 
+void WebView::setUseDarkAppearance(bool dark)
+{
+    if (m_useDarkAppearance == dark)
+        return;
+    m_useDarkAppearance = dark;
+    if (RefPtr page = m_page)
+        page->effectiveAppearanceDidChange();
+}
+
 bool WebView::usesOffscreenRendering() const
 {
     return m_usesOffscreenRendering;

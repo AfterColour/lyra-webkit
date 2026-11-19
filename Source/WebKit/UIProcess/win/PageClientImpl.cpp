@@ -483,6 +483,11 @@ void PageClientImpl::isPlayingAudioDidChange()
     notImplemented();
 }
 
+bool PageClientImpl::effectiveAppearanceIsDark() const
+{
+    return m_view.useDarkAppearance();
+}
+
 void PageClientImpl::refView()
 {
     notImplemented();

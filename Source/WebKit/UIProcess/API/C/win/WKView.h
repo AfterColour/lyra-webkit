@@ -43,6 +43,8 @@ WK_EXPORT void WKViewWindowAncestryDidChange(WKViewRef view);
 WK_EXPORT void WKViewSetIsInWindow(WKViewRef view, bool isInWindow);
 WK_EXPORT void WKViewSetUsesOffscreenRendering(WKViewRef view, bool enabled);
 WK_EXPORT void WKViewSetScrollOffsetOnNextResize(WKViewRef view, WKSize scrollOffset);
+// Lyra: dark color appearance for the page (prefers-color-scheme: dark); kept across process swaps.
+WK_EXPORT void WKViewSetUseDarkAppearance(WKViewRef view, bool useDarkAppearance);
 
 #ifdef __cplusplus
 }

@@ -71,6 +71,9 @@ public:
     void initialize();
     void setToolTip(const String&);
     void setUsesOffscreenRendering(bool);
+    // Lyra: the page's color appearance (prefers-color-scheme, dark form controls).
+    void setUseDarkAppearance(bool);
+    bool useDarkAppearance() const { return m_useDarkAppearance; }
     bool usesOffscreenRendering() const;
 
     void setViewNeedsDisplay(const WebCore::Region&);
@@ -154,6 +157,7 @@ private:
     bool m_trackingMouseLeave { false };
     bool m_isBeingDestroyed { false };
     bool m_usesOffscreenRendering { false };
+    bool m_useDarkAppearance { false };
 
     const std::unique_ptr<WebKit::PageClientImpl> m_pageClient;
     const RefPtr<WebPageProxy> m_page;

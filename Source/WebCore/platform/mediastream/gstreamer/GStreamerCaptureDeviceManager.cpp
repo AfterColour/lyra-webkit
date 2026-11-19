@@ -205,15 +205,19 @@ std::optional<GStreamerCaptureDevice> GStreamerCaptureDeviceManager::captureDevi
 
     auto types = deviceTypes();
     auto deviceClass = GMallocString::unsafeAdoptFromUTF8(gst_device_get_device_class(device.get()));
+    // The class is a set of words in any order: PipeWire and WASAPI say "Audio/Source" or
+    // "Video/Source", Media Foundation's cameras (Windows) "Source/Video".
+    auto classWords = String::fromUTF8(deviceClass.span()).split('/');
+    auto hasWord = [&](ASCIILiteral word) { return classWords.contains(String(word)); };
     CaptureDevice::DeviceType type;
-    if (startsWith(deviceClass.span(), "Audio"_s)) {
-        if (types.contains(CaptureDevice::DeviceType::Microphone) && endsWith(deviceClass.span(), "Source"_s))
+    if (hasWord("Audio"_s)) {
+        if (types.contains(CaptureDevice::DeviceType::Microphone) && hasWord("Source"_s))
             type = CaptureDevice::DeviceType::Microphone;
-        else if (types.contains(CaptureDevice::DeviceType::Speaker) && endsWith(deviceClass.span(), "Sink"_s))
+        else if (types.contains(CaptureDevice::DeviceType::Speaker) && hasWord("Sink"_s))
             type = CaptureDevice::DeviceType::Speaker;
         else
             return { };
-    } else if (types.contains(CaptureDevice::DeviceType::Camera) && startsWith(deviceClass.span(), "Video"_s))
+    } else if (types.contains(CaptureDevice::DeviceType::Camera) && hasWord("Video"_s) && hasWord("Source"_s))
         type = CaptureDevice::DeviceType::Camera;
     else
         return { };

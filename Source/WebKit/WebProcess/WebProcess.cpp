@@ -415,7 +415,7 @@ WebProcess::WebProcess()
     addSupplement<WebMediaKeyStorageManager>();
 #endif
 
-#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+#if (PLATFORM(COCOA) || (OS(WINDOWS) && USE(GSTREAMER))) && ENABLE(MEDIA_STREAM)
     addSupplementWithoutRefCountedCheck<UserMediaCaptureManager>();
 #endif
 

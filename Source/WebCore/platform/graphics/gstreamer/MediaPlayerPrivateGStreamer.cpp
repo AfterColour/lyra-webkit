@@ -4589,6 +4589,14 @@ void MediaPlayerPrivateGStreamer::managePlayerSuspend()
 {
     if (!m_pipeline || isMediaStreamPlayer())
         return;
+#if ENABLE(MEDIA_STREAM)
+    // Lyra: the first call comes from createGSTPlayBin(), before m_url says "mediastream:": a
+    // muted <video> of a camera, not yet laid out ("not visible"), was suspended there and never
+    // resumed (the check above returns early for media streams from then on), so play() only
+    // saved the PLAYING state and the video never started. Media streams are never suspended.
+    if (m_streamPrivate)
+        return;
+#endif
 
     RefPtr player = m_player.get();
 

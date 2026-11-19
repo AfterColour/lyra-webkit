@@ -756,7 +756,7 @@ void UserMediaPermissionRequestManagerProxy::processUserMediaPermissionRequest()
     });
 }
 
-#if !USE(GLIB)
+#if !USE(GLIB) && !(OS(WINDOWS) && USE(GSTREAMER))
 void UserMediaPermissionRequestManagerProxy::validateUserMediaRequestConstraints(WebCore::RealtimeMediaSourceCenter::ValidateHandler&& validateHandler, MediaDeviceHashSalts&& deviceIDHashSalts)
 {
     RealtimeMediaSourceCenter::singleton().validateRequestConstraints(WTF::move(validateHandler), m_currentUserMediaRequest->userRequest(), WTF::move(deviceIDHashSalts));
@@ -1071,7 +1071,7 @@ bool UserMediaPermissionRequestManagerProxy::wasGrantedVideoAccess(FrameIdentifi
     return m_grantedVideoFrames.contains(frameID);
 }
 
-#if !USE(GLIB)
+#if !USE(GLIB) && !(OS(WINDOWS) && USE(GSTREAMER))
 void UserMediaPermissionRequestManagerProxy::platformGetMediaStreamDevices(bool revealIdsAndLabels, CompletionHandler<void(Vector<CaptureDeviceWithCapabilities>&&)>&& completionHandler)
 {
     RealtimeMediaSourceCenter::singleton().getMediaStreamDevices([revealIdsAndLabels, completionHandler = WTF::move(completionHandler)](auto&& devices) mutable {

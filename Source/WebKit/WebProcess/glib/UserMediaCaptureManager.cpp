@@ -26,7 +26,7 @@
 #include "config.h"
 #include "UserMediaCaptureManager.h"
 
-#if USE(GLIB) && ENABLE(MEDIA_STREAM)
+#if (USE(GLIB) || (OS(WINDOWS) && USE(GSTREAMER))) && ENABLE(MEDIA_STREAM)
 
 #include "UserMediaCaptureManagerMessages.h"
 #include "WebProcess.h"

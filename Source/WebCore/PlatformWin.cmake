@@ -29,6 +29,7 @@ if (USE_GSTREAMER)
     )
     list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
         "${WEBCORE_DIR}/platform/graphics/gstreamer/win"
+        "${WEBCORE_DIR}/platform/mediastream/gstreamer"   # Lyra: camera and microphone capture
     )
     list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
         platform/graphics/win/AcceleratedVideoLayerWin.h
